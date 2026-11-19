@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · Club photo</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <header class="site">
+    <a class="brand" href="../index.html">Club photo</a>
+    <nav class="main">
+      <a href="../index.html">Accueil</a>
+      <a href="galeries.html">Galeries</a>
+      <a href="concours.html">Concours</a>
+      <a href="admin.html" aria-current="page">Admin</a>
+      <a href="login.html">Connexion</a>
+    </nav>
+    <label class="role-switch">Rôle (démo)<select id="role-select"></select></label>
+  </header>
+
+  <main>
+    <h1>Dashboard admin</h1>
+    <p class="muted">Maquette des réglages. Rien n'est enregistré pour le moment.</p>
+
+    <section class="card">
+      <h2>Rôles</h2>
+      <p class="muted">Admin, membre, jury, visiteur (modifiables).</p>
+    </section>
+
+    <section class="card">
+      <h2>Nouveau concours</h2>
+      <form onsubmit="event.preventDefault()">
+        <div class="field"><label for="c-title">Titre</label><input id="c-title" type="text"></div>
+        <div class="field"><label for="c-jury">Nombre de jurés</label><input id="c-jury" type="number" min="1" value="2"></div>
+        <div class="field"><label><input type="checkbox"> Autoriser l'auto-notation</label></div>
+        <div class="field">
+          <label for="c-visi">Visibilité des notes</label>
+          <select id="c-visi"><option value="fin">À la fin du concours</option><option value="pendant">Pendant le concours</option></select>
+        </div>
+        <button type="submit">Créer (maquette)</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Billets</h2>
+      <p class="muted">Édition des billets de la landing page : à venir.</p>
+    </section>
+  </main>
+
+  <footer class="site">Club photo · Front de démonstration</footer>
+  <script src="../js/app.js"></script>
+</body>
+</html>
