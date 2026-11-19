@@ -1,0 +1,6 @@
+node_modules/
+.env
+storage/raw/*
+storage/previews/*
+storage/thumbs/*
+!storage/*/.gitkeep

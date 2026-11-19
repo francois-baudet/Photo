@@ -1,0 +1,16 @@
+besoin
+je connais le js html css , node, express, postgres,
+je dispose d'un serveur avec un nginx pour le revers proxi. 
+
+
+un site internet
+pour un club de photographe
+pour deposer et visualiser leurs photos
+sous forme de gallerie 
+avec un systeme de concour interne
+
+gestion des utilisateur et des roles et des droit
+base de donées
+stokage des fichier jpeg et des row associes si besoin
+generation des miniatures 
+gestion des metadonées prise en charge des formats natif de nikon, canon, sony fuji et de logiciel adobe et dxo
