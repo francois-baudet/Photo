@@ -1,0 +1,10 @@
+.git
+**/node_modules
+.env
+backend/.env
+storage/raw/*
+storage/previews/*
+storage/thumbs/*
+!storage/*/.gitkeep
+conception
+frontend

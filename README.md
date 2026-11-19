@@ -11,3 +11,7 @@ Cadrage : [conception/besoin.md](conception/besoin.md)
 - `db/migrations/` : scripts PostgreSQL
 - `storage/` : fichiers RAW, aperçus et miniatures (hors git)
 - `conception/` : documents de cadrage
+
+## Déploiement
+
+Voir [DEPLOIEMENT.md](DEPLOIEMENT.md) (Docker, nginx, sauvegardes).
