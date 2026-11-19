@@ -5,8 +5,8 @@ Written for : le porteur du projet, qui déploie et met à jour le club photo su
 ## Architecture
 
 ```
-Internet ─► nginx (hôte) ─┬─► /         → fichiers statiques du front (frontend/)
-                          └─► /api/     → 127.0.0.1:3000 ─► conteneur api (Node.js)
+Réseau local ─► conteneur web (nginx, port 80) ─┬─► /      → fichiers statiques du front (frontend/)
+                                                 └─► /api/  → conteneur api (Node.js, port 3000)
                                                               │
                                                               ▼ réseau Docker interne
                                                         conteneur db (PostgreSQL 16)
@@ -16,7 +16,8 @@ Internet ─► nginx (hôte) ─┬─► /         → fichiers statiques du f
 ```
 
 - La base n'est accessible que depuis le réseau Docker. Aucun port publié.
-- L'API n'écoute que sur `127.0.0.1:3000`.
+- L'API n'écoute que sur `127.0.0.1:3000` (seul l'hôte peut la joindre directement).
+- Le conteneur `web` est la seule porte d'entrée HTTP (port 80).
 - Les fichiers photo sont sur le disque de l'hôte (`STORAGE_HOST_DIR`), pas dans un conteneur.
 
 ---
@@ -25,7 +26,6 @@ Internet ─► nginx (hôte) ─┬─► /         → fichiers statiques du f
 
 - Debian 12 dans un conteneur LXC ou une VM Proxmox.
 - Docker Engine et le plugin Compose : suivre la doc officielle <https://docs.docker.com/engine/install/debian/>.
-- nginx installé sur l'hôte.
 - Une clé SSH autorisée sur GitHub (ou une *deploy key* sur le dépôt `francois-baudet/Photo`).
 
 Vérifier :
@@ -149,41 +149,21 @@ curl -s -X POST http://127.0.0.1:3000/api/auth/login \
 
 ---
 
-## 7. nginx de l'hôte
+## 7. Front et proxy (service `web`)
 
-Exemple de fichier `/etc/nginx/sites-available/photo` (adapter `server_name`) :
+nginx tourne dans un conteneur (`web`) défini dans `docker-compose.yml`. Il sert le dossier `frontend/` et redirige `/api/` vers le conteneur `api`. La configuration est dans `deploy/nginx/default.conf`.
 
-```nginx
-server {
-    listen 80;
-    server_name photo.exemple.fr;
+Le port 80 est publié sur le réseau local. Aucun nginx n'est à installer sur l'hôte.
 
-    root /opt/photo/frontend;
-    index index.html;
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 200M;   # les fichiers RAW sont volumineux
-    }
-
-    location / {
-        try_files $uri $uri/ =404;
-    }
-}
-```
-
-Activer et recharger :
+Vérifier après démarrage :
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/photo /etc/nginx/sites-enabled/photo
-sudo nginx -t
-sudo systemctl reload nginx
+docker compose up -d web
+curl -sI http://127.0.0.1/ | head -1          # HTTP/1.1 200 OK
+curl -s http://127.0.0.1/api/galleries        # {"galleries":[]}
 ```
 
-Pour le HTTPS, ajouter un certificat (par exemple avec `certbot --nginx -d photo.exemple.fr`).
+Pour le HTTPS, il faudra un certificat et un second bloc `listen 443 ssl` dans `deploy/nginx/default.conf`. Ce n'est pas encore fait.
 
 ---
 

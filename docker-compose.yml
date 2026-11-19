@@ -38,5 +38,18 @@ services:
       # Lié à localhost : seul le nginx de l'hôte peut atteindre l'API
       - "127.0.0.1:3000:3000"
 
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      # Front statique (maquette) et configuration du proxy
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # Accessible sur le réseau local (port 80)
+      - "80:80"
+
 volumes:
   db_data:
