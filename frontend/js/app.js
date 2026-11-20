@@ -1045,9 +1045,11 @@ async function showPopover(cell) {
     document.body.appendChild(pop);
   }
   const list = await scoresFor(Number(cell.dataset.contest), Number(cell.dataset.scorePhoto));
-  pop.innerHTML = list.length
-    ? `<strong>Notes</strong><table>${list.map(s => `<tr><td>${esc(s.scorer)}</td><td class="muted">${s.kind === 'jury' ? 'jury' : 'membre'}</td><td>${s.value}</td></tr>`).join('')}</table>`
-    : '<span class="muted">Aucune note.</span>';
+  if (!list.length) {
+    pop.hidden = true;
+    return;
+  }
+  pop.innerHTML = `<table>${list.map(s => `<tr><td>${esc(s.scorer)}</td><td class="muted">${s.kind === 'jury' ? 'jury' : 'membre'}</td><td>${s.value}</td></tr>`).join('')}</table>`;
   const r = cell.getBoundingClientRect();
   const maxLeft = window.scrollX + document.documentElement.clientWidth - 280;
   pop.style.left = `${Math.max(8, Math.min(r.left + window.scrollX, maxLeft))}px`;
