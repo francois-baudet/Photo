@@ -573,14 +573,14 @@ async function renderRanking(contestId) {
   SCORES_CACHE = null; // les notes sont rechargées à chaque affichage des classements
   const ranking = await api(`/contests/${contestId}/ranking`).catch(() => null);
   if (!ranking) return;
-  const table = (rows) => rows.length
+  const table = (rows, kind) => rows.length
     ? `<table><thead><tr><th>Rang</th><th>Photo</th><th>Moyenne</th></tr></thead><tbody>${
-        rows.map(r => `<tr><td>${r.rank}</td><td>${esc(r.title)} <small class="muted">${esc(r.author)}</small></td><td class="hoverable" data-score-photo="${r.photoId}" data-contest="${contestId}">${r.average ?? '—'}</td></tr>`).join('')
+        rows.map(r => `<tr><td>${r.rank}</td><td>${esc(r.title)} <small class="muted">${esc(r.author)}</small></td><td class="hoverable" data-score-photo="${r.photoId}" data-score-kind="${kind}" data-contest="${contestId}">${r.average ?? '—'}</td></tr>`).join('')
       }</tbody></table>`
     : '<p class="muted">Aucun résultat.</p>';
   $('#ranking').innerHTML = `
-    <div class="card"><h2>Classement par les membres</h2>${table(ranking.byMembers)}</div>
-    <div class="card"><h2>Classement par le jury</h2>${table(ranking.byJury)}</div>`;
+    <div class="card"><h2>Classement par les membres</h2>${table(ranking.byMembers, 'membre')}</div>
+    <div class="card"><h2>Classement par le jury</h2>${table(ranking.byJury, 'jury')}</div>`;
 }
 
 // ---------- Administration ----------
@@ -1044,12 +1044,14 @@ async function showPopover(cell) {
     pop.setAttribute('role', 'tooltip');
     document.body.appendChild(pop);
   }
-  const list = await scoresFor(Number(cell.dataset.contest), Number(cell.dataset.scorePhoto));
+  const kind = cell.dataset.scoreKind;
+  const list = (await scoresFor(Number(cell.dataset.contest), Number(cell.dataset.scorePhoto)))
+    .filter(s => s.kind === kind);
   if (!list.length) {
     pop.hidden = true;
     return;
   }
-  pop.innerHTML = list.map(s => `<span class="score-val">${s.value}</span>`).join(' ');
+  pop.innerHTML = list.map(s => `<div class="score-val">${s.value}</div>`).join('');
   const r = cell.getBoundingClientRect();
   const maxLeft = window.scrollX + document.documentElement.clientWidth - 280;
   pop.style.left = `${Math.max(8, Math.min(r.left + window.scrollX, maxLeft))}px`;
