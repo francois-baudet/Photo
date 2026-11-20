@@ -9,7 +9,7 @@ const COOKIE_NAME = 'photo_session';
 const COOKIE_MAX_AGE = 12 * 60 * 60; // secondes
 
 // Utilisateur non connecté : rôle « visiteur », sans identifiant
-const ANONYMOUS = { id: null, username: null, displayName: null, role: 'visiteur', permissions: [] };
+const ANONYMOUS = { id: null, username: null, displayName: null, email: null, role: 'visiteur', permissions: [], mustChangePassword: false };
 
 function readCookie(req, name) {
   const header = req.get('Cookie') || '';
@@ -58,7 +58,7 @@ async function attachUser(req, res, next) {
   }
 
   const { rows } = await query(
-    `SELECT u.id, u.username, u.display_name AS "displayName",
+    `SELECT u.id, u.username, u.display_name AS "displayName", u.email, u.must_change_password AS "mustChangePassword",
             r.id AS "roleId", r.name AS role,
             COALESCE(
               (SELECT array_agg(p.code ORDER BY p.code)
@@ -89,7 +89,17 @@ function checkLoggedIn(req, res, next) {
 }
 
 // Pour les routes protégées : router.use(requireAuth) ou router.get(path, requireAuth, handler)
-const requireAuth = [attachUser, checkLoggedIn];
+// Tant que le mot de passe provisoire n'est pas changé, seules les routes de compte sont accessibles
+function blockIfMustChange(req, res, next) {
+  if (req.user.mustChangePassword) {
+    return res.status(403).json({ error: 'changement_mot_de_passe_requis' });
+  }
+  next();
+}
+
+const requireAuth = [attachUser, checkLoggedIn, blockIfMustChange];
+// Pour les routes de compte (profil, changement de mot de passe) : accessibles même si le changement est requis
+const requireAccount = [attachUser, checkLoggedIn];
 
 function hasPermission(user, code) {
   return Array.isArray(user.permissions) && user.permissions.includes(code);
@@ -109,6 +119,7 @@ module.exports = {
   ANONYMOUS,
   attachUser,
   requireAuth,
+  requireAccount,
   requirePermission,
   hasPermission,
   setSessionCookie,

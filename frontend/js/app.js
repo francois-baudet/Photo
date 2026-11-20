@@ -32,6 +32,11 @@ const ERRORS = {
   aucun_fichier: 'Aucun fichier sélectionné.',
   sens_invalide: 'Sens de rotation invalide.',
   pas_d_apercu: 'Cette photo n’a pas d’aperçu à faire pivoter.',
+  changement_mot_de_passe_requis: 'Vous devez d’abord changer votre mot de passe.',
+  mot_de_passe_identique: 'Le nouveau mot de passe doit être différent de l’ancien.',
+  mot_de_passe_actuel_incorrect: 'Le mot de passe actuel est incorrect.',
+  email_invalide: 'Adresse e-mail invalide.',
+  email_deja_utilise: 'Cette adresse e-mail est déjà utilisée.',
   deja_note:'Vous avez déjà noté cette photo : la note est définitive.',
   nombre_de_jures_invalide: 'Nombre de jurés invalide (0 à 20).',
   concours_ouvert_reglages_figes: 'Le concours est ouvert : seuls les membres et la visibilité des notes sont modifiables.',
@@ -186,11 +191,12 @@ function pageLogin() {
     e.preventDefault();
     say($('#login-msg'), 'Connexion…');
     try {
-      await api('/auth/login', {
+      const { user } = await api('/auth/login', {
         method: 'POST',
         body: { username: field(form, 'user').value.trim(), password: field(form, 'pwd').value },
       });
-      location.href = '/index.html';
+      // Mot de passe provisoire : changement obligatoire avant d'aller plus loin
+      location.href = user.mustChangePassword ? '/pages/mot-de-passe.html' : '/index.html';
     } catch (err) {
       say($('#login-msg'), err.message);
     }
@@ -215,6 +221,7 @@ function pageRegister() {
           token,
           username: field(form, 'user').value.trim(),
           displayName: field(form, 'displayName').value.trim(),
+          email: field(form, 'email').value.trim(),
           password: field(form, 'pwd').value,
         },
       });
@@ -619,53 +626,95 @@ async function loadRoles() {
   return roles;
 }
 
+// Carte de modification d'un utilisateur : tous les champs, plus la réinitialisation du mot de passe
+function userEditCard(u, roles) {
+  return `
+    <section class="card" id="edit-user-${u.id}" hidden>
+      <h3>Modifier ${esc(u.username)}</h3>
+      <div class="field"><label>Identifiant</label><input name="username" value="${esc(u.username)}" required></div>
+      <div class="field"><label>Nom affiché</label><input name="displayName" value="${esc(u.displayName)}" required></div>
+      <div class="field"><label>E-mail (optionnel)</label><input name="email" type="email" value="${esc(u.email || '')}"></div>
+      <div class="field"><label>Rôle</label><select name="roleId">${roleOptions(roles, u.roleId)}</select></div>
+      <label class="check"><input type="checkbox" name="active"${u.active ? ' checked' : ''}> Compte actif</label>
+      <p class="inline">
+        <button data-save-user="${u.id}">Enregistrer</button>
+        <button class="secondary" data-reset-user="${u.id}">Réinitialiser le mot de passe</button>
+      </p>
+    </section>`;
+}
+
 TAB_LOADERS.users = async () => {
   const [{ users }, roles] = await Promise.all([api('/admin/users'), loadRoles()]);
   const panel = document.querySelector('[data-panel="users"]');
   panel.innerHTML = `
     <div style="overflow-x:auto"><table>
-      <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Actif</th></tr></thead>
+      <thead><tr><th>Identifiant</th><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Actif</th><th>Mot de passe</th><th></th></tr></thead>
       <tbody>${users.map(u => `
         <tr>
           <td>${esc(u.username)}</td>
           <td>${esc(u.displayName)}</td>
-          <td><select data-role-user="${u.id}">${roleOptions(roles, u.roleId)}</select></td>
-          <td><input type="checkbox" data-active-user="${u.id}"${u.active ? ' checked' : ''}></td>
+          <td>${esc(u.email || '—')}</td>
+          <td>${esc(u.role)}</td>
+          <td>${u.active ? 'oui' : 'non'}</td>
+          <td>${u.mustChangePassword ? '<span class="badge">à changer</span>' : ''}</td>
+          <td><button class="secondary" data-toggle="edit-user-${u.id}">Modifier</button></td>
         </tr>`).join('')}</tbody>
     </table></div>
+    ${users.map(u => userEditCard(u, roles)).join('')}
     <p id="users-msg" class="muted" role="status"></p>
     <button class="toggle" data-toggle="box-user">+ Nouvel utilisateur</button>
     <section class="card" id="box-user" hidden>
     <form id="new-user">
       <div class="field"><label>Identifiant</label><input name="username" required></div>
       <div class="field"><label>Nom affiché</label><input name="displayName"></div>
-      <div class="field"><label>Mot de passe (8 caractères minimum)</label><input name="password" type="password" required minlength="8"></div>
+      <div class="field"><label>E-mail (optionnel)</label><input name="email" type="email"></div>
+      <div class="field"><label>Mot de passe (optionnel : sinon un mot de passe provisoire est généré)</label><input name="password" type="password" minlength="8"></div>
       <div class="field"><label>Rôle</label><select name="roleId">${roleOptions(roles)}</select></div>
       <button type="submit">Créer</button>
     </form>
     </section>`;
 
-  panel.querySelectorAll('[data-role-user]').forEach(sel => sel.addEventListener('change', async () => {
+  panel.querySelectorAll('[data-save-user]').forEach(btn => btn.addEventListener('click', async () => {
+    const id = btn.dataset.saveUser;
+    const card = panel.querySelector(`#edit-user-${id}`);
+    const body = {
+      username: field(card, 'username').value.trim(),
+      displayName: field(card, 'displayName').value.trim(),
+      email: field(card, 'email').value.trim(),
+      roleId: Number(field(card, 'roleId').value),
+      active: field(card, 'active').checked,
+    };
     try {
-      await api(`/admin/users/${sel.dataset.roleUser}`, { method: 'PATCH', body: { roleId: Number(sel.value) } });
-      say($('#users-msg'), 'Rôle mis à jour.', true);
+      await api(`/admin/users/${id}`, { method: 'PATCH', body });
+      TAB_LOADERS.users();
+      say($('#users-msg'), 'Utilisateur enregistré.', true);
     } catch (err) { say($('#users-msg'), err.message); }
   }));
-  panel.querySelectorAll('[data-active-user]').forEach(box => box.addEventListener('change', async () => {
+
+  panel.querySelectorAll('[data-reset-user]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm("Réinitialiser le mot de passe de cet utilisateur ? Un mot de passe provisoire sera généré, à changer à sa prochaine connexion.")) return;
     try {
-      await api(`/admin/users/${box.dataset.activeUser}`, { method: 'PATCH', body: { active: box.checked } });
-      say($('#users-msg'), 'Compte mis à jour.', true);
+      const { temporaryPassword } = await api(`/admin/users/${btn.dataset.resetUser}/reset-password`, { method: 'POST' });
+      alert(`Mot de passe provisoire (à transmettre, affiché une seule fois) : ${temporaryPassword}`);
+      TAB_LOADERS.users();
     } catch (err) { say($('#users-msg'), err.message); }
   }));
+
   $('#new-user').addEventListener('submit', async e => {
     e.preventDefault();
     const f = e.target;
     try {
-      await api('/admin/users', {
+      const result = await api('/admin/users', {
         method: 'POST',
-        body: { username: field(f, 'username').value, displayName: field(f, 'displayName').value, password: field(f, 'password').value, roleId: Number(field(f, 'roleId').value) },
+        body: {
+          username: field(f, 'username').value.trim(),
+          displayName: field(f, 'displayName').value.trim(),
+          email: field(f, 'email').value.trim(),
+          password: field(f, 'password').value,
+          roleId: Number(field(f, 'roleId').value),
+        },
       });
-      say($('#users-msg'), 'Utilisateur créé.', true);
+      alert(`Compte créé. Mot de passe provisoire (à transmettre, affiché une seule fois) : ${result.temporaryPassword}`);
       TAB_LOADERS.users();
     } catch (err) { say($('#users-msg'), err.message); }
   });
@@ -1116,6 +1165,29 @@ document.addEventListener('click', e => {
   if (box) box.hidden = !box.hidden;
 });
 
+// ---------- Changement de mot de passe ----------
+function pagePassword() {
+  const form = $('#password-form');
+  if (!ME) {
+    say($('#password-msg'), 'Connectez-vous pour changer votre mot de passe.');
+    form.hidden = true;
+    return;
+  }
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const current = field(form, 'current').value;
+    const next = field(form, 'next').value;
+    const confirmValue = field(form, 'confirm').value;
+    if (next !== confirmValue) return say($('#password-msg'), 'Les deux mots de passe ne correspondent pas.');
+    try {
+      await api('/auth/change-password', { method: 'POST', body: { currentPassword: current, newPassword: next } });
+      location.href = '/index.html';
+    } catch (err) {
+      say($('#password-msg'), err.message);
+    }
+  });
+}
+
 // ---------- Démarrage ----------
 const PAGES = {
   home: pageHome,
@@ -1129,12 +1201,17 @@ const PAGES = {
     else await pageContests();
   },
   admin: pageAdmin,
+  password: pagePassword,
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
   renderHeader();
   await loadMe();
   renderHeader();
+  if (ME && ME.mustChangePassword && location.pathname !== '/pages/mot-de-passe.html') {
+    location.href = '/pages/mot-de-passe.html';
+    return;
+  }
   const run = PAGES[document.body.dataset.page];
   if (!run) return;
   try {

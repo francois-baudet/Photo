@@ -20,6 +20,7 @@
       <form id="register-form">
         <div class="field"><label for="reg-user">Identifiant</label><input id="reg-user" name="user" required pattern="[a-zA-Z0-9_.-]{3,32}"></div>
         <div class="field"><label for="reg-name">Nom affiché</label><input id="reg-name" name="displayName"></div>
+        <div class="field"><label for="reg-email">E-mail (optionnel)</label><input id="reg-email" name="email" type="email"></div>
         <div class="field"><label for="reg-pwd">Mot de passe (8 caractères minimum)</label><input id="reg-pwd" name="pwd" type="password" minlength="8" required></div>
         <button type="submit">Créer le compte</button>
         <p id="register-msg" class="muted" role="status"></p>
