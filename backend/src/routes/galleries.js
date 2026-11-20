@@ -96,7 +96,7 @@ router.get('/:id', attachUser, async (req, res) => {
 
   const fields = await photos.visibleFields();
   const { rows } = await query(
-    `SELECT p.id, p.title, p.owner_id, p.preview_path IS NOT NULL AS "hasPreview", m.data
+    `SELECT p.id, p.title, p.owner_id, p.version, p.preview_path IS NOT NULL AS "hasPreview", m.data
        FROM photos p LEFT JOIN photo_metadata m ON m.photo_id = p.id
       WHERE p.gallery_id = $1
       ORDER BY p.created_at`,
@@ -119,9 +119,10 @@ router.get('/:id', attachUser, async (req, res) => {
     photos: rows.map(p => ({
       id: p.id,
       title: p.title,
-      thumbUrl: p.hasPreview ? `/api/photos/${p.id}/thumb` : null,
-      previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview` : null,
+      thumbUrl: p.hasPreview ? `/api/photos/${p.id}/thumb?v=${p.version}` : null,
+      previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview?v=${p.version}` : null,
       rawUrl: editable ? `/api/photos/${p.id}/raw` : null,
+      canRotate: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
       canDelete: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
       metadata: photos.displayMetadata(p.data || {}, fields),
     })),

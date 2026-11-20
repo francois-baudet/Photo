@@ -75,6 +75,28 @@ router.get('/:id/:kind', attachUser, async (req, res) => {
   });
 });
 
+// POST /api/photos/:id/rotate  { direction: "cw" | "ccw" }  (propriétaire ou gestionnaire)
+router.post('/:id/rotate', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
+  const direction = req.body && req.body.direction;
+  if (direction !== 'cw' && direction !== 'ccw') return res.status(400).json({ error: 'sens_invalide' });
+
+  const { rows } = await query(
+    'SELECT owner_id, preview_path, thumb_path FROM photos WHERE id = $1', [id]);
+  const photo = rows[0];
+  if (!photo) return res.status(404).json({ error: 'introuvable' });
+  if (photo.owner_id !== req.user.id && !hasPermission(req.user, 'user:manage')) {
+    return res.status(403).json({ error: 'acces_refuse' });
+  }
+  if (!photo.preview_path) return res.status(400).json({ error: 'pas_d_apercu' });
+
+  await photos.rotateFiles([photo.preview_path, photo.thumb_path], direction === 'cw' ? 90 : 270);
+  const { rows: updated } = await query(
+    'UPDATE photos SET version = version + 1 WHERE id = $1 RETURNING version', [id]);
+  res.json({ ok: true, version: updated[0].version });
+});
+
 // DELETE /api/photos/:id : supprimer une photo (propriétaire ou gestionnaire des utilisateurs)
 router.delete('/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);

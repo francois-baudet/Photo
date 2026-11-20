@@ -159,9 +159,19 @@ async function deleteFiles(relativePaths) {
   }
 }
 
+// Fait pivoter l'aperçu et la miniature stockés (le RAW d'origine n'est pas modifié)
+async function rotateFiles(relativePaths, angle) {
+  for (const rel of relativePaths.filter(Boolean)) {
+    const file = absolutePath(rel);
+    const buffer = await sharp(file).rotate(angle).toBuffer();
+    await fs.writeFile(file, buffer);
+  }
+}
+
 module.exports = {
   PhotoError,
   deleteFiles,
+  rotateFiles,
   ROOT,
   ensureStorage,
   absolutePath,

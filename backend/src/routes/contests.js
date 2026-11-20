@@ -44,7 +44,7 @@ async function contestPhotos(contest, user) {
   const { rows } = await query(
     `SELECT p.id, p.title, p.owner_id AS "ownerId", u.display_name AS author,
             p.thumb_path IS NOT NULL AS "hasThumb",
-            p.preview_path IS NOT NULL AS "hasPreview",
+            p.version, p.preview_path IS NOT NULL AS "hasPreview",
             (SELECT ROUND(AVG(s.value), 1) FROM scores s
               WHERE s.photo_id = p.id AND s.scorer_kind = 'membre')::float AS "memberAvg",
             (SELECT ROUND(AVG(s.value), 1) FROM scores s
@@ -63,8 +63,8 @@ async function contestPhotos(contest, user) {
     title: p.title,
     author: p.author,
     ownerId: p.ownerId,
-    thumbUrl: p.hasThumb ? `/api/photos/${p.id}/thumb` : null,
-    previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview` : null,
+    thumbUrl: p.hasThumb ? `/api/photos/${p.id}/thumb?v=${p.version}` : null,
+    previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview?v=${p.version}` : null,
     myScore: p.myScore,
     memberAvg: visible ? p.memberAvg : null,
     juryAvg: visible ? p.juryAvg : null,

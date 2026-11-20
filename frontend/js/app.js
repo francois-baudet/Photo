@@ -30,7 +30,9 @@ const ERRORS = {
   fichier_trop_volumineux: 'Fichier trop volumineux.',
   trop_de_fichiers: 'Trop de fichiers à la fois.',
   aucun_fichier: 'Aucun fichier sélectionné.',
-  deja_note: 'Vous avez déjà noté cette photo : la note est définitive.',
+  sens_invalide: 'Sens de rotation invalide.',
+  pas_d_apercu: 'Cette photo n’a pas d’aperçu à faire pivoter.',
+  deja_note:'Vous avez déjà noté cette photo : la note est définitive.',
   nombre_de_jures_invalide: 'Nombre de jurés invalide (0 à 20).',
   concours_ouvert_reglages_figes: 'Le concours est ouvert : seuls les membres et la visibilité des notes sont modifiables.',
   jures_incomplets: 'Le nombre de jurés n’est pas encore atteint.',
@@ -297,12 +299,24 @@ async function pageGallery() {
           <figcaption class="info">
             ${esc(p.title)}
             ${p.rawUrl ? `<small><a href="${p.rawUrl}">Télécharger le RAW</a></small>` : ''}
+            ${p.canRotate ? `<span class="inline"><button class="secondary" data-rotate="${p.id}" data-dir="ccw" title="Rotation à gauche" aria-label="Rotation à gauche">⟲</button><button class="secondary" data-rotate="${p.id}" data-dir="cw" title="Rotation à droite" aria-label="Rotation à droite">⟳</button></span>` : ''}
             ${p.canDelete ? `<button class="secondary" data-del-photo="${p.id}">Supprimer</button>` : ''}
           </figcaption>
         </figure>`).join('')
     : '<p class="muted">Aucune photo pour le moment.</p>';
 
   registerLightbox(photos);
+
+  document.querySelectorAll('[data-rotate]').forEach(btn => btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      await api(`/photos/${btn.dataset.rotate}/rotate`, { method: 'POST', body: { direction: btn.dataset.dir } });
+      location.reload();
+    } catch (err) {
+      btn.disabled = false;
+      alert(err.message);
+    }
+  }));
 
   document.querySelectorAll('[data-del-photo]').forEach(btn => btn.addEventListener('click', async () => {
     if (!confirm('Supprimer cette photo définitivement ?')) return;
