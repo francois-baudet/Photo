@@ -36,7 +36,8 @@ services:
       - ${STORAGE_HOST_DIR:-./storage}:/srv/storage
     ports:
       # Lié à localhost : seul le nginx de l'hôte peut atteindre l'API
-      - "127.0.0.1:3000:3000"
+      # Accessible sur le réseau local : le proxy openresty (pfc.fbaudet.fr) envoie /api/ ici
+      - "3000:3000"
 
   web:
     image: nginx:1.27-alpine

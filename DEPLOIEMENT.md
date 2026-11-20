@@ -16,7 +16,7 @@ Réseau local ─► conteneur web (nginx, port 80) ─┬─► /      → fich
 ```
 
 - La base n'est accessible que depuis le réseau Docker. Aucun port publié.
-- L'API n'écoute que sur `127.0.0.1:3000` (seul l'hôte peut la joindre directement).
+- L'API écoute sur le port 3000 du réseau local (`192.168.1.199:3000`). Le proxy openresty public (`pfc.fbaudet.fr`) envoie `/api/` vers ce port.
 - Le conteneur `web` est la seule porte d'entrée HTTP (port 80).
 - Les fichiers photo sont sur le disque de l'hôte (`STORAGE_HOST_DIR`), pas dans un conteneur.
 
@@ -30,7 +30,7 @@ Ce qui tourne réellement, à jour à la date de rédaction. Pour le détail des
 |---|---|
 | Projet | `/opt/photo`, branche `dev`, commit `fa24f21` |
 | `photo-db-1` | PostgreSQL 16, healthy, volume `photo_db_data`, aucun port publié |
-| `photo-api-1` | API Node 20, `127.0.0.1:3000` |
+| `photo-api-1` | API Node 20, `0.0.0.0:3000` (réseau local) |
 | `photo-web-1` | nginx 1.27, front et proxy `/api/`, port 80 sur le réseau local |
 | Migrations | `001_schema.sql`, `002_seed.sql` appliquées |
 | Rôles | 4 (admin, membre, jury, visiteur) |
