@@ -1,6 +1,7 @@
-// Concours : création, invitations, dépôt des photos, notes 0 à 20, deux classements.
+// Concours : une galerie de type « concours » + règles de notation.
 // Règles :
-//  - le nombre de jurés est fixé à la création ; le concours ne s'ouvre que si ce nombre de jurés est atteint ;
+//  - le nombre de jurés est fixé à la création ; le concours ne s'ouvre que lorsque ce nombre est atteint ;
+//  - les membres invités déposent leurs photos dans la galerie du concours ;
 //  - chaque photo reçoit une note de 0 à 20 de chaque juré et de chaque membre invité ;
 //  - auto-notation et visibilité des notes sont des options du concours ;
 //  - deux classements : par les membres, et par le jury (moyennes).
@@ -37,7 +38,7 @@ function notesVisible(contest, user) {
     || hasPermission(user, 'contest:manage');
 }
 
-// Photos du concours avec moyennes (uniquement si les notes sont visibles)
+// Photos de la galerie du concours, avec moyennes (uniquement si les notes sont visibles)
 async function contestPhotos(contest, user) {
   const { rows } = await query(
     `SELECT p.id, p.title, p.owner_id AS "ownerId", u.display_name AS author,
@@ -48,12 +49,11 @@ async function contestPhotos(contest, user) {
               WHERE s.photo_id = p.id AND s.scorer_kind = 'jury')::float AS "juryAvg",
             (SELECT s.value::float FROM scores s
               WHERE s.photo_id = p.id AND s.scorer_id = $2) AS "myScore"
-       FROM contest_photos cp
-       JOIN photos p ON p.id = cp.photo_id
+       FROM photos p
        JOIN users u ON u.id = p.owner_id
-      WHERE cp.contest_id = $1
+      WHERE p.gallery_id = $1
       ORDER BY p.id`,
-    [contest.id, user.id]
+    [contest.gallery_id, user.id]
   );
   const visible = notesVisible(contest, user);
   return rows.map(p => ({
@@ -71,7 +71,7 @@ async function contestPhotos(contest, user) {
 // GET /api/contests : liste des concours (utilisateurs connectés)
 router.get('/', requireAuth, async (req, res) => {
   const { rows } = await query(
-    `SELECT c.id, c.title, c.status, c.jury_count AS "juryCount",
+    `SELECT c.id, c.title, c.status, c.jury_count AS "juryCount", c.gallery_id AS "galleryId",
             EXISTS (SELECT 1 FROM contest_jurors j WHERE j.contest_id = c.id AND j.user_id = $1) AS juror,
             EXISTS (SELECT 1 FROM contest_members m WHERE m.contest_id = c.id AND m.user_id = $1) AS member
        FROM contests c ORDER BY c.id DESC`,
@@ -81,6 +81,7 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 // POST /api/contests  { title, juryCount, autoNotation, notesVisibility, memberIds, jurorIds }
+// Crée la galerie de type « concours » et le concours associé.
 router.post('/', requireAuth, requirePermission('contest:manage'), async (req, res) => {
   const { title, juryCount, autoNotation, notesVisibility, memberIds = [], jurorIds = [] } = req.body || {};
   if (typeof title !== 'string' || !title.trim() || title.trim().length > 120) return bad(res, 'titre_invalide');
@@ -91,10 +92,15 @@ router.post('/', requireAuth, requirePermission('contest:manage'), async (req, r
 
   try {
     const id = await withTransaction(async client => {
+      const { rows: g } = await client.query(
+        `INSERT INTO galleries (title, owner_id, visibility, kind)
+         VALUES ($1, $2, 'concours', 'concours') RETURNING id`,
+        [title.trim(), req.user.id]
+      );
       const { rows } = await client.query(
-        `INSERT INTO contests (title, jury_count, auto_notation, notes_visibility, created_by)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [title.trim(), juryCount, autoNotation === true, notesVisibility || 'fin', req.user.id]
+        `INSERT INTO contests (title, jury_count, auto_notation, notes_visibility, created_by, gallery_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [title.trim(), juryCount, autoNotation === true, notesVisibility || 'fin', req.user.id, g[0].id]
       );
       const contestId = rows[0].id;
       for (const userId of memberIds) {
@@ -128,7 +134,7 @@ router.get('/people', requireAuth, requirePermission('contest:manage'), async (r
   res.json({ users: rows });
 });
 
-// GET /api/contests/:id : détail, photos et notes selon les règles de visibilité
+// GET /api/contests/:id : détail, photos (dans la galerie) et notes selon les règles de visibilité
 router.get('/:id', requireAuth, async (req, res) => {
   const contest = await loadContest(Number(req.params.id));
   if (!contest) return res.status(404).json({ error: 'introuvable' });
@@ -139,6 +145,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     (me.juror && hasPermission(req.user, 'score:jury')) ||
     (me.member && !me.juror && hasPermission(req.user, 'score:member'))
   );
+  const canUpload = me.member && contest.status !== 'clos' && hasPermission(req.user, 'photo:upload');
 
   const { rows: jurors } = await query(
     `SELECT u.id, u.display_name AS "displayName" FROM contest_jurors j
@@ -152,13 +159,14 @@ router.get('/:id', requireAuth, async (req, res) => {
       id: contest.id,
       title: contest.title,
       status: contest.status,
+      galleryId: contest.gallery_id,
       juryCount: contest.jury_count,
       autoNotation: contest.auto_notation,
       notesVisibility: contest.notes_visibility,
       notesVisible: notesVisible(contest, req.user),
       jurors: canManage ? jurors : jurors.length,
       members: canManage ? members : members.length,
-      me: { juror: me.juror, member: me.member, canScore: canScoreNow },
+      me: { juror: me.juror, member: me.member, canScore: canScoreNow, canUpload },
     },
     photos: await contestPhotos(contest, req.user),
   });
@@ -182,38 +190,16 @@ router.patch('/:id', requireAuth, requirePermission('contest:manage'), async (re
       if (rows[0].n !== contest.jury_count) return bad(res, 'jures_incomplets');
     }
   }
-  await query(
-    'UPDATE contests SET title = COALESCE($1, title), status = COALESCE($2, status) WHERE id = $3',
-    [title ? title.trim() : null, status || null, contest.id]
-  );
-  res.json({ ok: true });
-});
-
-// POST /api/contests/:id/photos  { photoIds }  : ajouter ses propres photos
-router.post('/:id/photos', requireAuth, requirePermission('contest:join'), async (req, res) => {
-  const contest = await loadContest(Number(req.params.id));
-  if (!contest) return res.status(404).json({ error: 'introuvable' });
-  if (contest.status === 'clos') return bad(res, 'concours_clos');
-
-  const { photoIds } = req.body || {};
-  if (!idList(photoIds) || !photoIds.length) return bad(res, 'photos_invalides');
-
-  const me = await membershipOf(contest.id, req.user.id);
-  if (!me.member && !hasPermission(req.user, 'contest:manage')) return res.status(403).json({ error: 'acces_refuse' });
-
-  const { rows: owned } = await query(
-    'SELECT id FROM photos WHERE id = ANY($1) AND ($2 OR owner_id = $3)',
-    [photoIds, hasPermission(req.user, 'contest:manage'), req.user.id]
-  );
-  if (owned.length !== photoIds.length) return bad(res, 'photo_non_autorisee');
-
-  for (const photoId of photoIds) {
-    await query(
-      'INSERT INTO contest_photos (contest_id, photo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [contest.id, photoId]
+  await withTransaction(async client => {
+    await client.query(
+      'UPDATE contests SET title = COALESCE($1, title), status = COALESCE($2, status) WHERE id = $3',
+      [title ? title.trim() : null, status || null, contest.id]
     );
-  }
-  res.status(201).json({ ok: true });
+    if (title) {
+      await client.query('UPDATE galleries SET title = $1 WHERE id = $2', [title.trim(), contest.gallery_id]);
+    }
+  });
+  res.json({ ok: true });
 });
 
 // POST /api/contests/:id/scores  { photoId, value }  : note de 0 à 20
@@ -228,10 +214,10 @@ router.post('/:id/scores', requireAuth, async (req, res) => {
   if (!Number.isFinite(note) || note < 0 || note > 20) return bad(res, 'note_invalide');
   const rounded = Math.round(note * 10) / 10;
 
+  // La photo doit être dans la galerie du concours
   const { rows: inContest } = await query(
-    `SELECT p.owner_id FROM contest_photos cp JOIN photos p ON p.id = cp.photo_id
-      WHERE cp.contest_id = $1 AND cp.photo_id = $2`,
-    [contest.id, photoId]
+    'SELECT owner_id FROM photos WHERE id = $1 AND gallery_id = $2',
+    [photoId, contest.gallery_id]
   );
   if (!inContest[0]) return bad(res, 'photo_hors_concours');
 

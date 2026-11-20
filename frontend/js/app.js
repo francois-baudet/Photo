@@ -225,12 +225,18 @@ function pageRegister() {
 async function refreshGalleries() {
   const { galleries } = await api('/galleries');
   $('#gallery-list').innerHTML = galleries.length
-    ? galleries.map(g => `
-        <a class="card gallery-link" href="/pages/galerie.html?id=${g.id}">
+    ? galleries.map(g => {
+        const href = g.kind === 'concours' && g.contestId
+          ? `/pages/concours.html?id=${g.contestId}`
+          : `/pages/galerie.html?id=${g.id}`;
+        return `
+        <a class="card gallery-link" href="${href}">
           <h2>${esc(g.title)}</h2>
           <p class="muted">Par ${esc(g.author)} · ${g.photoCount} photo(s)</p>
           <span class="badge">${esc(g.visibility)}</span>
-        </a>`).join('')
+          ${g.kind === 'concours' ? '<span class="badge">concours</span>' : ''}
+        </a>`;
+      }).join('')
     : '<p class="muted">Aucune galerie accessible.</p>';
 }
 
@@ -310,7 +316,12 @@ async function pageGallery() {
     });
   }
 
-  if (gallery.canEdit && can(ME, 'photo:upload')) {
+  if (gallery.contestId) {
+    view.insertAdjacentHTML('afterbegin',
+      `<p><a href="/pages/concours.html?id=${gallery.contestId}">Galerie de concours : voir le concours et les notes →</a></p>`);
+  }
+
+  if (gallery.canUpload) {
     $('#upload-section').hidden = false;
     const form = $('#upload-form');
     form.addEventListener('submit', async e => {
@@ -416,8 +427,12 @@ async function pageContest() {
     });
   }
 
+  if (contest.me.canUpload) {
+    view.insertAdjacentHTML('beforeend',
+      `<p><a class="btn" href="/pages/galerie.html?id=${contest.galleryId}">Déposer mes photos dans la galerie du concours</a></p>`);
+  }
+
   renderPhotos(contest, photos);
-  if (contest.me.member && contest.status !== 'clos') await renderAddPhotos(id);
   if (contest.notesVisible) await renderRanking(id);
 }
 
@@ -457,29 +472,6 @@ function renderPhotos(contest, photos) {
         say($('#score-msg'), err.message);
       }
     });
-  });
-}
-
-async function renderAddPhotos(contestId) {
-  const { photos } = await api('/photos/mine');
-  const box = $('#add-photos');
-  box.hidden = false;
-  if (!photos.length) {
-    $('#add-list').innerHTML = '<p class="muted">Vous n’avez pas encore de photo. Déposez-en dans une galerie.</p>';
-    return;
-  }
-  $('#add-list').innerHTML = photos.map(p => `
-    <label class="check"><input type="checkbox" value="${p.id}"> ${esc(p.title)} <span class="muted">(${esc(p.galleryTitle)})</span></label>`).join('');
-  $('#add-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const photoIds = [...$('#add-list').querySelectorAll('input:checked')].map(i => Number(i.value));
-    try {
-      await api(`/contests/${contestId}/photos`, { method: 'POST', body: { photoIds } });
-      say($('#add-msg'), 'Photos inscrites.', true);
-      setTimeout(() => location.reload(), 800);
-    } catch (err) {
-      say($('#add-msg'), err.message);
-    }
   });
 }
 

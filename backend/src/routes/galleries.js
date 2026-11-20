@@ -38,13 +38,29 @@ async function loadGallery(id) {
   return rows[0] || null;
 }
 
+// Dépôt : propriétaire ou gestionnaire ; et, pour une galerie de concours, les membres invités
+// tant que le concours n'est pas clos.
+async function canUploadTo(gallery, user) {
+  if (canEdit(gallery, user)) return true;
+  if (gallery.kind !== 'concours' || user.id === null) return false;
+  const { rows } = await query(
+    `SELECT c.status,
+            EXISTS (SELECT 1 FROM contest_members m WHERE m.contest_id = c.id AND m.user_id = $2) AS member
+       FROM contests c WHERE c.gallery_id = $1`,
+    [gallery.id, user.id]
+  );
+  return Boolean(rows[0] && rows[0].member && rows[0].status !== 'clos');
+}
+
 // GET /api/galleries : galeries visibles pour le rôle courant (anonyme = visiteur)
 router.get('/', attachUser, async (req, res) => {
   const { rows } = await query(
-    `SELECT g.id, g.title, g.visibility, u.display_name AS author,
+    `SELECT g.id, g.title, g.visibility, g.kind, u.display_name AS author,
+            c.id AS "contestId",
             (SELECT COUNT(*)::int FROM photos p WHERE p.gallery_id = g.id) AS "photoCount"
        FROM galleries g
        JOIN users u ON u.id = g.owner_id
+       LEFT JOIN contests c ON c.gallery_id = g.id
        JOIN visibility_access va ON va.visibility = g.visibility
        JOIN roles r ON r.id = va.role_id AND r.name = $1
       ORDER BY g.created_at DESC`,
@@ -86,13 +102,18 @@ router.get('/:id', attachUser, async (req, res) => {
     [gallery.id]
   );
   const editable = canEdit(gallery, req.user);
+  const uploadable = await canUploadTo(gallery, req.user);
+  const { rows: contest } = await query('SELECT id FROM contests WHERE gallery_id = $1', [gallery.id]);
 
   res.json({
     gallery: {
       id: gallery.id,
       title: gallery.title,
       visibility: gallery.visibility,
+      kind: gallery.kind,
+      contestId: contest[0] ? contest[0].id : null,
       canEdit: editable,
+      canUpload: uploadable && hasPermission(req.user, 'photo:upload'),
     },
     photos: rows.map(p => ({
       id: p.id,
@@ -142,7 +163,7 @@ router.post(
   async (req, res, next) => {
     const gallery = await loadGallery(Number(req.params.id));
     if (!gallery) return res.status(404).json({ error: 'introuvable' });
-    if (!canEdit(gallery, req.user)) return res.status(403).json({ error: 'acces_refuse' });
+    if (!(await canUploadTo(gallery, req.user))) return res.status(403).json({ error: 'acces_refuse' });
     req.gallery = gallery;
     next();
   },
