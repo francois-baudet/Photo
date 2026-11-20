@@ -1,5 +1,7 @@
 const { query } = require('../db/pool');
 
+const VISIBILITIES = ['public', 'membres', 'concours', 'jury', 'admin'];
+
 // Galeries visibles pour un rôle, selon la table visibility_access
 async function listGalleries(roleName) {
   const { rows } = await query(
@@ -16,4 +18,14 @@ async function listGalleries(roleName) {
   return rows;
 }
 
-module.exports = { listGalleries };
+async function createGallery({ ownerId, title, visibility }) {
+  const { rows } = await query(
+    `INSERT INTO galleries (title, owner_id, visibility)
+     VALUES ($1, $2, $3)
+     RETURNING id, title, visibility`,
+    [title, ownerId, visibility]
+  );
+  return rows[0];
+}
+
+module.exports = { VISIBILITIES, listGalleries, createGallery };
