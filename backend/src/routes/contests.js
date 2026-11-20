@@ -8,6 +8,7 @@
 const router = require('express').Router();
 const { query, withTransaction } = require('../db/pool');
 const { requireAuth, requirePermission, hasPermission } = require('../middlewares/auth');
+const photos = require('../services/photos');
 
 const NOTES_VISIBILITY = ['pendant', 'fin'];
 const STATUSES = ['brouillon', 'ouvert', 'clos'];
@@ -76,7 +77,9 @@ router.get('/', requireAuth, async (req, res) => {
     `SELECT c.id, c.title, c.status, c.jury_count AS "juryCount", c.gallery_id AS "galleryId",
             EXISTS (SELECT 1 FROM contest_jurors j WHERE j.contest_id = c.id AND j.user_id = $1) AS juror,
             EXISTS (SELECT 1 FROM contest_members m WHERE m.contest_id = c.id AND m.user_id = $1) AS member
-       FROM contests c ORDER BY c.id DESC`,
+       FROM contests c
+       JOIN galleries g ON g.id = c.gallery_id AND g.kind = 'concours'
+      ORDER BY c.id DESC`,
     [req.user.id]
   );
   res.json({ contests: rows });
@@ -305,6 +308,36 @@ router.post('/:id/scores', requireAuth, async (req, res) => {
   res.json({ ok: true, kind, value: rounded });
 });
 
+// POST /api/contests/:id/convert : après clôture, le concours devient une galerie standard
+// (ses photos restent, la compétition et ses notes sont archivées et n'apparaissent plus dans l'onglet Concours)
+router.post('/:id/convert', requireAuth, requirePermission('contest:manage'), async (req, res) => {
+  const contest = await loadContest(Number(req.params.id));
+  if (!contest) return res.status(404).json({ error: 'introuvable' });
+  if (contest.status !== 'clos') return bad(res, 'concours_non_clos');
+  await query("UPDATE galleries SET kind = 'classique' WHERE id = $1", [contest.gallery_id]);
+  res.json({ ok: true, galleryId: contest.gallery_id });
+});
+
+// DELETE /api/contests/:id : supprime le concours à tout moment.
+// Pour un concours encore de type concours, sa galerie et ses photos sont supprimées aussi.
+router.delete('/:id', requireAuth, requirePermission('contest:manage'), async (req, res) => {
+  const contest = await loadContest(Number(req.params.id));
+  if (!contest) return res.status(404).json({ error: 'introuvable' });
+
+  const { rows: g } = await query('SELECT kind FROM galleries WHERE id = $1', [contest.gallery_id]);
+  if (g[0] && g[0].kind === 'concours') {
+    const { rows: files } = await query(
+      'SELECT raw_path, preview_path, thumb_path FROM photos WHERE gallery_id = $1', [contest.gallery_id]);
+    await query('DELETE FROM galleries WHERE id = $1', [contest.gallery_id]); // supprime aussi le concours
+    await photos.deleteFiles(files.flatMap(f => [f.raw_path, f.preview_path, f.thumb_path]));
+  } else {
+    // Galerie déjà convertie : seule la compétition (notes, jurés, membres) est supprimée
+    await query('DELETE FROM contests WHERE id = $1', [contest.id]);
+  }
+  res.json({ ok: true });
+});
+
+// GET /api/contests/:id/scores
 // GET /api/contests/:id/scores : chaque note donnée (qui, quel rôle, quelle note), si les notes sont visibles
 router.get('/:id/scores', requireAuth, async (req, res) => {
   const contest = await loadContest(Number(req.params.id));

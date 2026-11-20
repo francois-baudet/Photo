@@ -464,11 +464,9 @@ async function pageContest() {
   }
 
   await renderContestEditor(contest, id);
+  await renderContestActions(contest, id);
   renderPhotos(contest, photos);
-  if (contest.notesVisible) {
-    await renderRanking(id);
-    await renderScoreDetails(id, photos);
-  }
+  if (contest.notesVisible) await renderRanking(id);
 }
 
 // Formulaire de modification d'un concours (gestionnaire des concours).
@@ -578,33 +576,13 @@ function renderPhotos(contest, photos) {
   });
 }
 
-// Toutes les notes données, photo par photo : qui a noté, en tant que quel rôle, et la note
-async function renderScoreDetails(contestId, photos) {
-  const { scores } = await api(`/contests/${contestId}/scores`).catch(() => ({ scores: [] }));
-  const titles = new Map(photos.map(p => [p.id, p.title]));
-  const byPhoto = new Map();
-  for (const s of scores) {
-    if (!byPhoto.has(s.photoId)) byPhoto.set(s.photoId, []);
-    byPhoto.get(s.photoId).push(s);
-  }
-  const blocks = [...byPhoto.entries()].map(([photoId, list]) => `
-    <div class="card">
-      <h3>${esc(titles.get(photoId) || 'Photo')}</h3>
-      <table>
-        <thead><tr><th>Votant</th><th>Rôle</th><th>Note</th></tr></thead>
-        <tbody>${list.map(s => `<tr><td>${esc(s.scorer)}</td><td>${s.kind === 'jury' ? 'Jury' : 'Membre'}</td><td>${s.value}</td></tr>`).join('')}</tbody>
-      </table>
-    </div>`).join('');
-  $('#contest-view').insertAdjacentHTML('beforeend',
-    `<h2>Détail des notes</h2>${blocks || '<p class="muted">Aucune note donnée.</p>'}`);
-}
-
 async function renderRanking(contestId) {
+  SCORES_CACHE = null; // les notes sont rechargées à chaque affichage des classements
   const ranking = await api(`/contests/${contestId}/ranking`).catch(() => null);
   if (!ranking) return;
   const table = (rows) => rows.length
     ? `<table><thead><tr><th>Rang</th><th>Photo</th><th>Moyenne</th></tr></thead><tbody>${
-        rows.map(r => `<tr><td>${r.rank}</td><td>${esc(r.title)} <small class="muted">${esc(r.author)}</small></td><td>${r.average ?? '—'}</td></tr>`).join('')
+        rows.map(r => `<tr><td>${r.rank}</td><td>${esc(r.title)} <small class="muted">${esc(r.author)}</small></td><td class="hoverable" data-score-photo="${r.photoId}" data-contest="${contestId}">${r.average ?? '—'}</td></tr>`).join('')
       }</tbody></table>`
     : '<p class="muted">Aucun résultat.</p>';
   $('#ranking').innerHTML = `
@@ -999,6 +977,90 @@ document.addEventListener('click', e => {
   const thumb = e.target.closest('[data-lb]');
   if (thumb) openLightbox(Number(thumb.dataset.lb));
 });
+
+// ---------- Survol des moyennes : détail des notes ----------
+let SCORES_CACHE = null;
+
+async function scoresFor(contestId, photoId) {
+  if (!SCORES_CACHE) {
+    const { scores } = await api(`/contests/${contestId}/scores`).catch(() => ({ scores: [] }));
+    SCORES_CACHE = scores;
+  }
+  return SCORES_CACHE.filter(s => s.photoId === photoId);
+}
+
+function hidePopover() {
+  const pop = document.getElementById('score-pop');
+  if (pop) pop.hidden = true;
+}
+
+async function showPopover(cell) {
+  let pop = document.getElementById('score-pop');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'score-pop';
+    pop.className = 'score-pop';
+    pop.setAttribute('role', 'tooltip');
+    document.body.appendChild(pop);
+  }
+  const list = await scoresFor(Number(cell.dataset.contest), Number(cell.dataset.scorePhoto));
+  pop.innerHTML = list.length
+    ? `<strong>Notes</strong><table>${list.map(s => `<tr><td>${esc(s.scorer)}</td><td class="muted">${s.kind === 'jury' ? 'jury' : 'membre'}</td><td>${s.value}</td></tr>`).join('')}</table>`
+    : '<span class="muted">Aucune note.</span>';
+  const r = cell.getBoundingClientRect();
+  const maxLeft = window.scrollX + document.documentElement.clientWidth - 280;
+  pop.style.left = `${Math.max(8, Math.min(r.left + window.scrollX, maxLeft))}px`;
+  pop.style.top = `${r.bottom + window.scrollY + 6}px`;
+  pop.hidden = false;
+}
+
+document.addEventListener('mouseover', e => {
+  const cell = e.target.closest('[data-score-photo]');
+  if (cell) showPopover(cell);
+});
+document.addEventListener('mouseout', e => {
+  if (e.target.closest('[data-score-photo]')) hidePopover();
+});
+document.addEventListener('click', e => {
+  const cell = e.target.closest('[data-score-photo]');
+  if (cell) showPopover(cell);
+  else if (!e.target.closest('#score-pop')) hidePopover();
+});
+
+// ---------- Actions de gestion d'un concours : conversion et suppression ----------
+async function renderContestActions(contest, id) {
+  if (!can(ME, 'contest:manage')) return;
+  let html = '<div class="inline" style="margin-top:12px">';
+  if (contest.status === 'clos') {
+    html += '<button class="secondary" id="convert-contest">Transformer en galerie standard</button>';
+  }
+  html += '<button class="secondary" id="delete-contest">Supprimer le concours</button>';
+  html += '<span id="contest-danger-msg" class="muted" role="status"></span></div>';
+  $('#contest-view').insertAdjacentHTML('beforeend', html);
+
+  const convert = $('#convert-contest');
+  if (convert) {
+    convert.addEventListener('click', async () => {
+      if (!confirm("Transformer ce concours en galerie standard ? Les photos restent dans la galerie. Le concours et ses notes ne seront plus affichés dans l'onglet Concours.")) return;
+      try {
+        const result = await api(`/contests/${id}/convert`, { method: 'POST' });
+        location.href = `/pages/galerie.html?id=${result.galleryId}`;
+      } catch (err) {
+        say($('#contest-danger-msg'), err.message);
+      }
+    });
+  }
+
+  $('#delete-contest').addEventListener('click', async () => {
+    if (!confirm('Supprimer ce concours définitivement ? Toutes les notes seront perdues. Si le concours est encore de type concours, sa galerie et ses photos seront supprimées aussi.')) return;
+    try {
+      await api(`/contests/${id}`, { method: 'DELETE' });
+      location.href = '/pages/concours.html';
+    } catch (err) {
+      say($('#contest-danger-msg'), err.message);
+    }
+  });
+}
 
 // ---------- Boutons qui affichent un formulaire ----------
 // <button data-toggle="ID"> bascule l'affichage de l'élément #ID

@@ -226,3 +226,14 @@ td .thumb-btn { width: auto; }
   width: calc(100% - 32px); max-width: 420px; max-height: 80vh; overflow-y: auto;
 }
 .meta-box td { border-bottom: 1px solid var(--border); vertical-align: top; }
+
+/* ---- Détail des notes au survol des moyennes ---- */
+.hoverable { cursor: help; text-decoration: underline dotted; }
+.score-pop {
+  position: absolute; z-index: 1200;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+  min-width: 200px; max-width: 280px; font-size: 0.9rem;
+}
+.score-pop table td { padding: 3px 6px; border-bottom: 1px solid var(--border); }

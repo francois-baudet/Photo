@@ -112,7 +112,7 @@ router.get('/:id', attachUser, async (req, res) => {
       title: gallery.title,
       visibility: gallery.visibility,
       kind: gallery.kind,
-      contestId: contest[0] ? contest[0].id : null,
+      contestId: contest[0] && gallery.kind === 'concours' ? contest[0].id : null,
       canEdit: editable,
       canUpload: uploadable && hasPermission(req.user, 'photo:upload'),
     },
