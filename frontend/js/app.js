@@ -1049,7 +1049,7 @@ async function showPopover(cell) {
     pop.hidden = true;
     return;
   }
-  pop.innerHTML = `<table>${list.map(s => `<tr><td>${esc(s.scorer)}</td><td class="muted">${s.kind === 'jury' ? 'jury' : 'membre'}</td><td>${s.value}</td></tr>`).join('')}</table>`;
+  pop.innerHTML = list.map(s => `<span class="score-val">${s.value}</span>`).join(' ');
   const r = cell.getBoundingClientRect();
   const maxLeft = window.scrollX + document.documentElement.clientWidth - 280;
   pop.style.left = `${Math.max(8, Math.min(r.left + window.scrollX, maxLeft))}px`;
