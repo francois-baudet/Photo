@@ -305,6 +305,22 @@ router.post('/:id/scores', requireAuth, async (req, res) => {
   res.json({ ok: true, kind, value: rounded });
 });
 
+// GET /api/contests/:id/scores : chaque note donnée (qui, quel rôle, quelle note), si les notes sont visibles
+router.get('/:id/scores', requireAuth, async (req, res) => {
+  const contest = await loadContest(Number(req.params.id));
+  if (!contest) return res.status(404).json({ error: 'introuvable' });
+  if (!notesVisible(contest, req.user)) return res.status(403).json({ error: 'notes_non_visibles' });
+
+  const { rows } = await query(
+    `SELECT s.photo_id AS "photoId", s.scorer_kind AS kind, u.display_name AS scorer, s.value::float AS value
+       FROM scores s JOIN users u ON u.id = s.scorer_id
+      WHERE s.contest_id = $1
+      ORDER BY s.photo_id, s.scorer_kind, u.display_name`,
+    [contest.id]
+  );
+  res.json({ scores: rows });
+});
+
 // GET /api/contests/:id/ranking : deux classements (membres et jury), moyennes
 router.get('/:id/ranking', requireAuth, async (req, res) => {
   const contest = await loadContest(Number(req.params.id));

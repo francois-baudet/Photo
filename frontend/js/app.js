@@ -446,6 +446,9 @@ async function pageContest() {
     const label = next === 'ouvert' ? 'Ouvrir le concours' : 'Clôturer le concours';
     $('#contest-actions').innerHTML = `<button id="advance">${label}</button> <span id="advance-msg" class="muted"></span>`;
     $('#advance').addEventListener('click', async () => {
+      if (!confirm(next === 'ouvert'
+        ? 'Ouvrir le concours ? Les membres invités pourront alors noter.'
+        : 'Clôturer le concours ? Plus aucune note ne pourra être donnée ni modifiée, et toutes les notes seront visibles.')) return;
       try {
         await api(`/contests/${id}`, { method: 'PATCH', body: { status: next } });
         location.reload();
@@ -462,7 +465,10 @@ async function pageContest() {
 
   await renderContestEditor(contest, id);
   renderPhotos(contest, photos);
-  if (contest.notesVisible) await renderRanking(id);
+  if (contest.notesVisible) {
+    await renderRanking(id);
+    await renderScoreDetails(id, photos);
+  }
 }
 
 // Formulaire de modification d'un concours (gestionnaire des concours).
@@ -570,6 +576,27 @@ function renderPhotos(contest, photos) {
       }
     });
   });
+}
+
+// Toutes les notes données, photo par photo : qui a noté, en tant que quel rôle, et la note
+async function renderScoreDetails(contestId, photos) {
+  const { scores } = await api(`/contests/${contestId}/scores`).catch(() => ({ scores: [] }));
+  const titles = new Map(photos.map(p => [p.id, p.title]));
+  const byPhoto = new Map();
+  for (const s of scores) {
+    if (!byPhoto.has(s.photoId)) byPhoto.set(s.photoId, []);
+    byPhoto.get(s.photoId).push(s);
+  }
+  const blocks = [...byPhoto.entries()].map(([photoId, list]) => `
+    <div class="card">
+      <h3>${esc(titles.get(photoId) || 'Photo')}</h3>
+      <table>
+        <thead><tr><th>Votant</th><th>Rôle</th><th>Note</th></tr></thead>
+        <tbody>${list.map(s => `<tr><td>${esc(s.scorer)}</td><td>${s.kind === 'jury' ? 'Jury' : 'Membre'}</td><td>${s.value}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>`).join('');
+  $('#contest-view').insertAdjacentHTML('beforeend',
+    `<h2>Détail des notes</h2>${blocks || '<p class="muted">Aucune note donnée.</p>'}`);
 }
 
 async function renderRanking(contestId) {
@@ -704,6 +731,7 @@ TAB_LOADERS.invites = async () => {
     } catch (err) { say($('#invite-msg'), err.message); }
   });
   panel.querySelectorAll('[data-del-invite]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('Supprimer cette invitation ?')) return;
     await api(`/admin/invitations/${btn.dataset.delInvite}`, { method: 'DELETE' }).catch(() => {});
     TAB_LOADERS.invites();
   }));
@@ -752,6 +780,7 @@ TAB_LOADERS.roles = async () => {
     } catch (err) { say($('#roles-msg'), err.message); }
   }));
   panel.querySelectorAll('[data-del-role]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('Supprimer ce rôle ?')) return;
     try {
       await api(`/admin/roles/${btn.dataset.delRole}`, { method: 'DELETE' });
       TAB_LOADERS.roles();
@@ -842,6 +871,7 @@ TAB_LOADERS.posts = async () => {
     } catch (err) { say($('#posts-msg'), err.message); }
   }));
   panel.querySelectorAll('[data-del-post]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('Supprimer ce billet ?')) return;
     await api(`/posts/${btn.dataset.delPost}`, { method: 'DELETE' }).catch(() => {});
     TAB_LOADERS.posts();
   }));
