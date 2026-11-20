@@ -30,6 +30,7 @@ const ERRORS = {
   fichier_trop_volumineux: 'Fichier trop volumineux.',
   trop_de_fichiers: 'Trop de fichiers à la fois.',
   aucun_fichier: 'Aucun fichier sélectionné.',
+  deja_note: 'Vous avez déjà noté cette photo : la note est définitive.',
   nombre_de_jures_invalide: 'Nombre de jurés invalide (0 à 20).',
   concours_ouvert_reglages_figes: 'Le concours est ouvert : seuls les membres et la visibilité des notes sont modifiables.',
   jures_incomplets: 'Le nombre de jurés n’est pas encore atteint.',
@@ -288,11 +289,11 @@ async function pageGallery() {
   $('#gallery-title').textContent = gallery.title;
 
   $('#photo-grid').innerHTML = photos.length
-    ? photos.map(p => `
+    ? photos.map((p, i) => `
         <figure class="photo">
-          <a href="${p.previewUrl || '#'}" target="_blank" rel="noopener">
+          <button class="thumb-btn" data-lb="${i}" aria-label="Agrandir ${esc(p.title)}">
             <div class="thumb" style="${p.thumbUrl ? `background-image:url('${p.thumbUrl}');background-size:cover;background-position:center` : ''}"></div>
-          </a>
+          </button>
           <figcaption class="info">
             ${esc(p.title)}
             <small>${metaLines(p.metadata) || 'Pas de métadonnées'}</small>
@@ -301,6 +302,8 @@ async function pageGallery() {
           </figcaption>
         </figure>`).join('')
     : '<p class="muted">Aucune photo pour le moment.</p>';
+
+  registerLightbox(photos);
 
   document.querySelectorAll('[data-del-photo]').forEach(btn => btn.addEventListener('click', async () => {
     if (!confirm('Supprimer cette photo définitivement ?')) return;
@@ -523,15 +526,22 @@ async function renderContestEditor(contest, id) {
 
 function renderPhotos(contest, photos) {
   const canScore = contest.me.canScore;
-  const rows = photos.map(p => {
+  // Une note par personne et par photo : une fois notée, la note reste affichée sans modification possible
+  const rows = photos.map((p, i) => {
     const ownPhoto = p.ownerId === ME.id && !contest.autoNotation;
     const cell = (v) => contest.notesVisible ? (v ?? '—') : 'masqué';
-    const scoreCell = canScore && !ownPhoto
-      ? `<input type="number" min="0" max="20" step="0.5" value="${p.myScore ?? ''}" data-photo="${p.id}" style="width:80px"> <button data-score="${p.id}">Noter</button>`
-      : (p.myScore ?? '—');
+    let scoreCell = '—';
+    if (p.myScore !== null && p.myScore !== undefined) {
+      scoreCell = `<strong>${p.myScore}</strong> <small class="muted">(définitive)</small>`;
+    } else if (canScore && !ownPhoto) {
+      scoreCell = `<input type="number" min="0" max="20" step="0.5" data-photo="${p.id}" style="width:80px"> <button data-score="${p.id}">Noter</button>`;
+    }
+    const thumb = p.thumbUrl
+      ? `<button class="thumb-btn" data-lb="${i}" aria-label="Agrandir ${esc(p.title)}"><div class="thumb mini" style="background-image:url('${p.thumbUrl}');background-size:cover"></div></button>`
+      : '<div class="thumb mini"></div>';
     return `
       <tr>
-        <td><div class="thumb mini" style="${p.thumbUrl ? `background-image:url('${p.thumbUrl}');background-size:cover` : ''}"></div></td>
+        <td>${thumb}</td>
         <td>${esc(p.title)}<br><small class="muted">${esc(p.author)}</small></td>
         <td>${cell(p.memberAvg)}</td>
         <td>${cell(p.juryAvg)}</td>
@@ -546,6 +556,8 @@ function renderPhotos(contest, photos) {
          <p id="score-msg" class="muted" role="status"></p>`
     : '<p class="muted">Aucune photo inscrite pour le moment.</p>';
 
+  registerLightbox(photos);
+
   document.querySelectorAll('[data-score]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const photoId = Number(btn.dataset.score);
@@ -553,6 +565,8 @@ function renderPhotos(contest, photos) {
       try {
         await api(`/contests/${contest.id}/scores`, { method: 'POST', body: { photoId, value: Number(value) } });
         say($('#score-msg'), 'Note enregistrée.', true);
+        // Moyennes et classements recalculés après chaque vote
+        await pageContest();
       } catch (err) {
         say($('#score-msg'), err.message);
       }
@@ -866,6 +880,97 @@ async function pageAdmin() {
   const first = adminTabs();
   if (first) openTab(first);
 }
+
+// ---------- Visionneuse plein écran ----------
+// Les vignettes cliquables (data-lb="index") ouvrent l'aperçu dans la liste enregistrée par registerLightbox.
+let LB_ITEMS = [];
+
+function registerLightbox(items) {
+  LB_ITEMS = items.map(p => ({ id: p.id, title: p.title, previewUrl: p.previewUrl || null }));
+}
+
+function openMetadata(photoId, parent) {
+  const modal = document.createElement('div');
+  modal.className = 'meta-modal';
+  modal.innerHTML = `<div class="meta-box" role="dialog" aria-label="Métadonnées">
+      <div class="inline" style="justify-content:space-between"><strong>Métadonnées</strong>
+        <button class="secondary" data-meta-close>Fermer</button></div>
+      <div id="meta-body"><p class="muted">Chargement…</p></div>
+    </div>`;
+  parent.appendChild(modal);
+  const close = () => modal.remove();
+  modal.addEventListener('click', e => { if (e.target === modal || e.target.closest('[data-meta-close]')) close(); });
+
+  api(`/photos/${photoId}/info`).then(({ metadata }) => {
+    const rows = Object.entries(metadata).filter(([, v]) => v !== null && v !== undefined && v !== '');
+    $('#meta-body').innerHTML = rows.length
+      ? `<table>${rows.map(([k, v]) => `<tr><td class="muted">${esc(METADATA_LABELS[k] || k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>`
+      : '<p class="muted">Aucune métadonnée affichée. Réglages dans le dashboard admin.</p>';
+  }).catch(err => {
+    $('#meta-body').innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+  });
+}
+
+function openLightbox(startIndex) {
+  if (!LB_ITEMS.length) return;
+  let current = startIndex;
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="lb-bar">
+      <span class="lb-title"></span>
+      <span class="lb-actions">
+        <button class="lb-small" data-lb-info title="Métadonnées">ⓘ</button>
+        <button class="lb-close" data-lb-close aria-label="Fermer">✕</button>
+      </span>
+    </div>
+    <div class="lb-stage">
+      <button class="lb-nav" data-lb-prev aria-label="Photo précédente">‹</button>
+      <img alt="">
+      <button class="lb-nav" data-lb-next aria-label="Photo suivante">›</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+
+  const img = overlay.querySelector('img');
+  const show = () => {
+    const item = LB_ITEMS[current];
+    overlay.querySelector('.lb-title').textContent = item.title;
+    img.alt = item.title;
+    img.src = item.previewUrl || '';
+    img.style.visibility = item.previewUrl ? 'visible' : 'hidden';
+    overlay.querySelector('[data-lb-prev]').hidden = LB_ITEMS.length < 2;
+    overlay.querySelector('[data-lb-next]').hidden = LB_ITEMS.length < 2;
+  };
+  const step = d => { current = (current + d + LB_ITEMS.length) % LB_ITEMS.length; show(); };
+  const close = () => {
+    overlay.remove();
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = e => {
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  };
+
+  overlay.addEventListener('click', e => {
+    if (e.target.closest('[data-lb-close]')) return close();
+    if (e.target.closest('[data-lb-prev]')) return step(-1);
+    if (e.target.closest('[data-lb-next]')) return step(1);
+    if (e.target.closest('[data-lb-info]')) return openMetadata(LB_ITEMS[current].id, overlay);
+    if (e.target.classList.contains('lb-stage')) close();
+  });
+  document.addEventListener('keydown', onKey);
+  show();
+}
+
+document.addEventListener('click', e => {
+  const thumb = e.target.closest('[data-lb]');
+  if (thumb) openLightbox(Number(thumb.dataset.lb));
+});
 
 // ---------- Boutons qui affichent un formulaire ----------
 // <button data-toggle="ID"> bascule l'affichage de l'élément #ID

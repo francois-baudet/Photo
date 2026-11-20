@@ -43,6 +43,7 @@ async function contestPhotos(contest, user) {
   const { rows } = await query(
     `SELECT p.id, p.title, p.owner_id AS "ownerId", u.display_name AS author,
             p.thumb_path IS NOT NULL AS "hasThumb",
+            p.preview_path IS NOT NULL AS "hasPreview",
             (SELECT ROUND(AVG(s.value), 1) FROM scores s
               WHERE s.photo_id = p.id AND s.scorer_kind = 'membre')::float AS "memberAvg",
             (SELECT ROUND(AVG(s.value), 1) FROM scores s
@@ -62,6 +63,7 @@ async function contestPhotos(contest, user) {
     author: p.author,
     ownerId: p.ownerId,
     thumbUrl: p.hasThumb ? `/api/photos/${p.id}/thumb` : null,
+    previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview` : null,
     myScore: p.myScore,
     memberAvg: visible ? p.memberAvg : null,
     juryAvg: visible ? p.juryAvg : null,
@@ -292,13 +294,14 @@ router.post('/:id/scores', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'auto_notation_interdite' });
   }
 
-  await query(
+  // Une seule note par personne et par photo : la note est définitive
+  const { rowCount } = await query(
     `INSERT INTO scores (contest_id, photo_id, scorer_id, scorer_kind, value)
      VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (contest_id, photo_id, scorer_id)
-     DO UPDATE SET value = EXCLUDED.value, scorer_kind = EXCLUDED.scorer_kind`,
+     ON CONFLICT (contest_id, photo_id, scorer_id) DO NOTHING`,
     [contest.id, photoId, req.user.id, kind, rounded]
   );
+  if (!rowCount) return res.status(409).json({ error: 'deja_note' });
   res.json({ ok: true, kind, value: rounded });
 });
 

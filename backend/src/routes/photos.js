@@ -25,6 +25,26 @@ router.get('/mine', requireAuth, async (req, res) => {
   });
 });
 
+// GET /api/photos/:id/info : métadonnées affichées (réglages du dashboard), selon la visibilité de la galerie
+router.get('/:id/info', attachUser, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
+
+  const { rows } = await query(
+    `SELECT p.gallery_id, p.title, m.data
+       FROM photos p LEFT JOIN photo_metadata m ON m.photo_id = p.id
+      WHERE p.id = $1`,
+    [id]
+  );
+  const photo = rows[0];
+  if (!photo) return res.status(404).json({ error: 'introuvable' });
+  const gallery = await loadGallery(photo.gallery_id);
+  if (!gallery || !(await canView(gallery, req.user))) return res.status(404).json({ error: 'introuvable' });
+
+  const fields = await photos.visibleFields();
+  res.json({ title: photo.title, metadata: photos.displayMetadata(photo.data || {}, fields) });
+});
+
 // GET /api/photos/:id/:kind  (kind = thumb | preview | raw)
 router.get('/:id/:kind', attachUser, async (req, res) => {
   const id = Number(req.params.id);
