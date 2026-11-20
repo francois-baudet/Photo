@@ -63,6 +63,7 @@ router.get('/', attachUser, async (req, res) => {
        LEFT JOIN contests c ON c.gallery_id = g.id
        JOIN visibility_access va ON va.visibility = g.visibility
        JOIN roles r ON r.id = va.role_id AND r.name = $1
+      WHERE g.kind = 'classique'
       ORDER BY g.created_at DESC`,
     [req.user.role]
   );

@@ -296,7 +296,6 @@ async function pageGallery() {
           </button>
           <figcaption class="info">
             ${esc(p.title)}
-            <small>${metaLines(p.metadata) || 'Pas de métadonnées'}</small>
             ${p.rawUrl ? `<small><a href="${p.rawUrl}">Télécharger le RAW</a></small>` : ''}
             ${p.canDelete ? `<button class="secondary" data-del-photo="${p.id}">Supprimer</button>` : ''}
           </figcaption>
@@ -530,11 +529,10 @@ function renderPhotos(contest, photos) {
   const rows = photos.map((p, i) => {
     const ownPhoto = p.ownerId === ME.id && !contest.autoNotation;
     const cell = (v) => contest.notesVisible ? (v ?? '—') : 'masqué';
-    let scoreCell = '—';
-    if (p.myScore !== null && p.myScore !== undefined) {
-      scoreCell = `<strong>${p.myScore}</strong> <small class="muted">(définitive)</small>`;
-    } else if (canScore && !ownPhoto) {
-      scoreCell = `<input type="number" min="0" max="20" step="0.5" data-photo="${p.id}" style="width:80px"> <button data-score="${p.id}">Noter</button>`;
+    const hasScore = p.myScore !== null && p.myScore !== undefined;
+    let scoreCell = hasScore ? p.myScore : '—';
+    if (canScore && !ownPhoto) {
+      scoreCell = `<input type="number" min="0" max="20" step="0.5" value="${hasScore ? p.myScore : ''}" data-photo="${p.id}" style="width:80px"> <button data-score="${p.id}">${hasScore ? 'Modifier' : 'Noter'}</button>`;
     }
     const thumb = p.thumbUrl
       ? `<button class="thumb-btn" data-lb="${i}" aria-label="Agrandir ${esc(p.title)}"><div class="thumb mini" style="background-image:url('${p.thumbUrl}');background-size:cover"></div></button>`

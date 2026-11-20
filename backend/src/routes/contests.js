@@ -294,14 +294,14 @@ router.post('/:id/scores', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'auto_notation_interdite' });
   }
 
-  // Une seule note par personne et par photo : la note est définitive
-  const { rowCount } = await query(
+  // Une seule note par personne et par photo ; l'utilisateur peut la modifier tant que le concours est ouvert
+  await query(
     `INSERT INTO scores (contest_id, photo_id, scorer_id, scorer_kind, value)
      VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (contest_id, photo_id, scorer_id) DO NOTHING`,
+     ON CONFLICT (contest_id, photo_id, scorer_id)
+     DO UPDATE SET value = EXCLUDED.value, scorer_kind = EXCLUDED.scorer_kind`,
     [contest.id, photoId, req.user.id, kind, rounded]
   );
-  if (!rowCount) return res.status(409).json({ error: 'deja_note' });
   res.json({ ok: true, kind, value: rounded });
 });
 
