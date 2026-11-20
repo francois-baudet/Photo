@@ -275,5 +275,6 @@ Proxmox : sauvegarde `vzdump` du conteneur LXC (ou snapshot de la VM). Elle couv
 ## Notes
 
 - Le premier démarrage ne crée aucun utilisateur : voir la section 6.
-- Les routes concours, billets, admin et dépôt de photos renvoient encore `501` (non implémentées).
-- Le front (`frontend/`) est une maquette statique : il n'est pas encore branché sur l'API.
+- Fonctions implémentées : connexion et invitations, droits configurables par rôle, galeries et visibilité, dépôt RAW/JPEG avec métadonnées (exiftool) et aperçus (sharp), concours (jurés, membres, notes 0 à 20, deux classements), billets, dashboard admin (utilisateurs, rôles, invitations, visibilité, billets, réglages).
+- Le conteneur `api` embarque `exiftool` et `sharp` : une reconstruction de l'image (`docker compose build api`) est nécessaire après chaque mise à jour du backend.
+- Le front (`frontend/`) est branché sur l'API ; la session est un cookie HttpOnly (`photo_session`). Pour le HTTPS, définir `COOKIE_SECURE=true` dans `.env`.

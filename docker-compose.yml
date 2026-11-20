@@ -31,6 +31,9 @@ services:
       DATABASE_URL: postgres://photo:${DB_PASSWORD}@db:5432/photo
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET manquant dans .env}
       STORAGE_DIR: /srv/storage
+      # true si le site public est servi en HTTPS (cookie de session « Secure »)
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      INVITATION_DAYS: ${INVITATION_DAYS:-7}
     volumes:
       # Dossier des fichiers RAW, aperçus et miniatures sur l'hôte
       - ${STORAGE_HOST_DIR:-./storage}:/srv/storage
