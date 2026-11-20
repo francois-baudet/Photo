@@ -66,6 +66,7 @@ const msg = code => ERRORS[code] || code || 'Erreur.';
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
+const field = (form, name) => form.querySelector(`[name="${name}"]`);
 const can = (user, code) => !!(user && user.permissions && user.permissions.includes(code));
 const fmtDate = d => (d ? new Date(d).toLocaleDateString('fr-FR') : '');
 
@@ -108,10 +109,19 @@ async function loadMe() {
   return ME;
 }
 
+// Pages de détail rattachées à une rubrique du menu
+const SECTION_OF = {
+  '/pages/galerie.html': '/pages/galeries.html',
+  '/pages/register.html': '/pages/login.html',
+};
+
+// En-tête commun à toutes les pages. Appelé une fois immédiatement (liens visibles
+// sans attendre la session), puis après le chargement de la session.
 function renderHeader() {
   const nav = $('#nav');
   if (!nav) return;
-  const here = location.pathname === '/' ? '/index.html' : location.pathname;
+  const path = location.pathname === '/' ? '/index.html' : location.pathname;
+  const here = SECTION_OF[path] || path;
 
   const links = [
     ['/index.html', 'Accueil'],
@@ -128,7 +138,7 @@ function renderHeader() {
   const status = $('#user-status');
   if (!status) return;
   status.innerHTML = ME
-    ? `${esc(ME.displayName)} <span class="badge">${esc(ME.role)}</span> · <a href="#" id="logout">Déconnexion</a>`
+    ? `<span class="who">${esc(ME.displayName)}</span> <span class="badge">${esc(ME.role)}</span> · <a href="#" id="logout">Déconnexion</a>`
     : '<a href="/pages/login.html">Connexion</a>';
 
   const logout = $('#logout');
@@ -174,7 +184,7 @@ function pageLogin() {
     try {
       await api('/auth/login', {
         method: 'POST',
-        body: { username: form.user.value.trim(), password: form.pwd.value },
+        body: { username: field(form, 'user').value.trim(), password: field(form, 'pwd').value },
       });
       location.href = '/index.html';
     } catch (err) {
@@ -199,9 +209,9 @@ function pageRegister() {
         method: 'POST',
         body: {
           token,
-          username: form.user.value.trim(),
-          displayName: form.displayName.value.trim(),
-          password: form.pwd.value,
+          username: field(form, 'user').value.trim(),
+          displayName: field(form, 'displayName').value.trim(),
+          password: field(form, 'pwd').value,
         },
       });
       location.href = '/pages/login.html';
@@ -236,7 +246,7 @@ async function pageGalleries() {
     try {
       await api('/galleries', {
         method: 'POST',
-        body: { title: form.title.value, visibility: form.visibility.value },
+        body: { title: field(form, 'title').value, visibility: field(form, 'visibility').value },
       });
       form.reset();
       say($('#gallery-msg'), 'Galerie créée.', true);
@@ -287,12 +297,12 @@ async function pageGallery() {
   if (gallery.canEdit) {
     $('#visibility-section').hidden = false;
     const edit = $('#visibility-form');
-    edit.visibility.innerHTML = VISIBILITIES
+    field(edit, 'visibility').innerHTML = VISIBILITIES
       .map(v => `<option value="${v}"${v === gallery.visibility ? ' selected' : ''}>${v}</option>`).join('');
     edit.addEventListener('submit', async e => {
       e.preventDefault();
       try {
-        await api(`/galleries/${id}`, { method: 'PATCH', body: { visibility: edit.visibility.value } });
+        await api(`/galleries/${id}`, { method: 'PATCH', body: { visibility: field(edit, 'visibility').value } });
         say($('#visibility-msg'), 'Visibilité enregistrée.', true);
       } catch (err) {
         say($('#visibility-msg'), err.message);
@@ -305,7 +315,7 @@ async function pageGallery() {
     const form = $('#upload-form');
     form.addEventListener('submit', async e => {
       e.preventDefault();
-      const files = form.files.files;
+      const files = field(form, 'files').files;
       if (!files.length) return say($('#upload-msg'), 'Aucun fichier sélectionné.');
       const body = new FormData();
       for (const file of files) body.append('files', file);
@@ -351,10 +361,10 @@ async function pageContests() {
       const { id } = await api('/contests', {
         method: 'POST',
         body: {
-          title: form.title.value,
-          juryCount: Number(form.juryCount.value),
-          autoNotation: form.autoNotation.checked,
-          notesVisibility: form.notesVisibility.value,
+          title: field(form, 'title').value,
+          juryCount: Number(field(form, 'juryCount').value),
+          autoNotation: field(form, 'autoNotation').checked,
+          notesVisibility: field(form, 'notesVisibility').value,
           memberIds: pick('members'),
           jurorIds: pick('jurors'),
         },
@@ -564,7 +574,7 @@ TAB_LOADERS.users = async () => {
     try {
       await api('/admin/users', {
         method: 'POST',
-        body: { username: f.username.value, displayName: f.displayName.value, password: f.password.value, roleId: Number(f.roleId.value) },
+        body: { username: field(f, 'username').value, displayName: field(f, 'displayName').value, password: field(f, 'password').value, roleId: Number(field(f, 'roleId').value) },
       });
       say($('#users-msg'), 'Utilisateur créé.', true);
       TAB_LOADERS.users();
@@ -593,7 +603,7 @@ TAB_LOADERS.invites = async () => {
   $('#new-invite').addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      const { path } = await api('/admin/invitations', { method: 'POST', body: { roleId: Number(e.target.roleId.value) } });
+      const { path } = await api('/admin/invitations', { method: 'POST', body: { roleId: Number(field(e.target, 'roleId').value) } });
       const link = location.origin + path;
       say($('#invite-msg'), `Lien à transmettre : ${link}`, true);
       TAB_LOADERS.invites();
@@ -715,7 +725,7 @@ TAB_LOADERS.posts = async () => {
     e.preventDefault();
     const f = e.target;
     try {
-      await api('/posts', { method: 'POST', body: { title: f.title.value, body: f.body.value, published: f.published.checked } });
+      await api('/posts', { method: 'POST', body: { title: field(f, 'title').value, body: field(f, 'body').value, published: field(f, 'published').checked } });
       TAB_LOADERS.posts();
     } catch (err) { say($('#posts-msg'), err.message); }
   });
@@ -758,7 +768,7 @@ TAB_LOADERS.settings = async () => {
     const f = e.target;
     const fields = [...f.querySelectorAll('[name="field"]:checked')].map(i => i.value);
     try {
-      await api('/admin/settings/club_name', { method: 'PUT', body: { value: f.club_name.value.trim() } });
+      await api('/admin/settings/club_name', { method: 'PUT', body: { value: field(f, 'club_name').value.trim() } });
       await api('/admin/settings/metadata_fields', { method: 'PUT', body: { value: fields } });
       say($('#settings-msg'), 'Réglages enregistrés.', true);
     } catch (err) { say($('#settings-msg'), err.message); }
@@ -787,6 +797,7 @@ const PAGES = {
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
+  renderHeader();
   await loadMe();
   renderHeader();
   const run = PAGES[document.body.dataset.page];
