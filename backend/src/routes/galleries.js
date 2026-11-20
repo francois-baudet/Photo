@@ -95,7 +95,7 @@ router.get('/:id', attachUser, async (req, res) => {
 
   const fields = await photos.visibleFields();
   const { rows } = await query(
-    `SELECT p.id, p.title, p.preview_path IS NOT NULL AS "hasPreview", m.data
+    `SELECT p.id, p.title, p.owner_id, p.preview_path IS NOT NULL AS "hasPreview", m.data
        FROM photos p LEFT JOIN photo_metadata m ON m.photo_id = p.id
       WHERE p.gallery_id = $1
       ORDER BY p.created_at`,
@@ -121,6 +121,7 @@ router.get('/:id', attachUser, async (req, res) => {
       thumbUrl: p.hasPreview ? `/api/photos/${p.id}/thumb` : null,
       previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview` : null,
       rawUrl: editable ? `/api/photos/${p.id}/raw` : null,
+      canDelete: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
       metadata: photos.displayMetadata(p.data || {}, fields),
     })),
   });
@@ -143,6 +144,22 @@ router.patch('/:id', requireAuth, async (req, res) => {
     'UPDATE galleries SET title = COALESCE($1, title), visibility = COALESCE($2, visibility) WHERE id = $3',
     [title ? title.trim() : null, visibility || null, gallery.id]
   );
+  res.json({ ok: true });
+});
+
+// DELETE /api/galleries/:id : supprimer une galerie et ses photos (propriétaire ou gestionnaire)
+// Une galerie de concours supprime aussi le concours et ses notes.
+router.delete('/:id', requireAuth, async (req, res) => {
+  const gallery = await loadGallery(Number(req.params.id));
+  if (!gallery) return res.status(404).json({ error: 'introuvable' });
+  if (!canEdit(gallery, req.user)) return res.status(403).json({ error: 'acces_refuse' });
+
+  const { rows: files } = await query(
+    'SELECT raw_path, preview_path, thumb_path FROM photos WHERE gallery_id = $1',
+    [gallery.id]
+  );
+  await query('DELETE FROM galleries WHERE id = $1', [gallery.id]);
+  await photos.deleteFiles(files.flatMap(f => [f.raw_path, f.preview_path, f.thumb_path]));
   res.json({ ok: true });
 });
 

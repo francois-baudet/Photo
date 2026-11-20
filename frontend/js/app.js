@@ -245,7 +245,7 @@ async function pageGalleries() {
   if (!can(ME, 'gallery:create')) return;
 
   const form = $('#gallery-form');
-  $('#new-gallery').hidden = false;
+  $('#btn-new-gallery').hidden = false;
   $('#g-visibility').innerHTML = VISIBILITIES.map(v => `<option value="${v}">${v}</option>`).join('');
   form.addEventListener('submit', async e => {
     e.preventDefault();
@@ -296,12 +296,37 @@ async function pageGallery() {
             ${esc(p.title)}
             <small>${metaLines(p.metadata) || 'Pas de métadonnées'}</small>
             ${p.rawUrl ? `<small><a href="${p.rawUrl}">Télécharger le RAW</a></small>` : ''}
+            ${p.canDelete ? `<button class="secondary" data-del-photo="${p.id}">Supprimer</button>` : ''}
           </figcaption>
         </figure>`).join('')
     : '<p class="muted">Aucune photo pour le moment.</p>';
 
+  document.querySelectorAll('[data-del-photo]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('Supprimer cette photo définitivement ?')) return;
+    try {
+      await api(`/photos/${btn.dataset.delPhoto}`, { method: 'DELETE' });
+      location.reload();
+    } catch (err) {
+      alert(err.message);
+    }
+  }));
+
   if (gallery.canEdit) {
-    $('#visibility-section').hidden = false;
+    const del = $('#btn-delete-gallery');
+    del.hidden = false;
+    del.addEventListener('click', async () => {
+      if (!confirm('Supprimer la galerie et toutes ses photos définitivement ?')) return;
+      try {
+        await api(`/galleries/${id}`, { method: 'DELETE' });
+        location.href = '/pages/galeries.html';
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  }
+
+  if (gallery.canEdit) {
+    $('#btn-visibility').hidden = false;
     const edit = $('#visibility-form');
     field(edit, 'visibility').innerHTML = VISIBILITIES
       .map(v => `<option value="${v}"${v === gallery.visibility ? ' selected' : ''}>${v}</option>`).join('');
@@ -322,7 +347,7 @@ async function pageGallery() {
   }
 
   if (gallery.canUpload) {
-    $('#upload-section').hidden = false;
+    $('#btn-upload').hidden = false;
     const form = $('#upload-form');
     form.addEventListener('submit', async e => {
       e.preventDefault();
@@ -356,7 +381,7 @@ async function pageContests() {
     : '<p class="muted">Aucun concours.</p>';
 
   if (!can(ME, 'contest:manage')) return;
-  $('#new-contest').hidden = false;
+  $('#btn-new-contest').hidden = false;
 
   const { users } = await api('/contests/people');
   const boxes = (name) => users.map(u => `
@@ -539,14 +564,16 @@ TAB_LOADERS.users = async () => {
         </tr>`).join('')}</tbody>
     </table></div>
     <p id="users-msg" class="muted" role="status"></p>
-    <h2>Nouvel utilisateur</h2>
+    <button class="toggle" data-toggle="box-user">+ Nouvel utilisateur</button>
+    <section class="card" id="box-user" hidden>
     <form id="new-user">
       <div class="field"><label>Identifiant</label><input name="username" required></div>
       <div class="field"><label>Nom affiché</label><input name="displayName"></div>
       <div class="field"><label>Mot de passe (8 caractères minimum)</label><input name="password" type="password" required minlength="8"></div>
       <div class="field"><label>Rôle</label><select name="roleId">${roleOptions(roles)}</select></div>
       <button type="submit">Créer</button>
-    </form>`;
+    </form>
+    </section>`;
 
   panel.querySelectorAll('[data-role-user]').forEach(sel => sel.addEventListener('change', async () => {
     try {
@@ -578,10 +605,13 @@ TAB_LOADERS.invites = async () => {
   const [{ invitations }, roles] = await Promise.all([api('/admin/invitations'), loadRoles()]);
   const panel = document.querySelector('[data-panel="invites"]');
   panel.innerHTML = `
+    <button class="toggle" data-toggle="box-invite">+ Nouvelle invitation</button>
+    <section class="card" id="box-invite" hidden>
     <form id="new-invite" class="inline">
       <select name="roleId">${roleOptions(roles)}</select>
       <button type="submit">Créer une invitation</button>
     </form>
+    </section>
     <p id="invite-msg" class="muted" role="status"></p>
     <div style="overflow-x:auto"><table>
       <thead><tr><th>Rôle</th><th>Expire le</th><th>Statut</th><th></th></tr></thead>
@@ -629,12 +659,14 @@ TAB_LOADERS.roles = async () => {
         </p>
       </section>`;
     }).join('')}
-    <h2>Nouveau rôle</h2>
+    <button class="toggle" data-toggle="box-role">+ Nouveau rôle</button>
+    <section class="card" id="box-role" hidden>
     <form id="new-role" class="inline">
       <input name="name" placeholder="identifiant (ex. photographe)" required>
       <input name="label" placeholder="libellé affiché" required>
       <button type="submit">Créer</button>
-    </form>`;
+    </form>
+    </section>`;
 
   panel.querySelectorAll('[data-save-role]').forEach(btn => btn.addEventListener('click', async () => {
     const card = panel.querySelector(`[data-role="${btn.dataset.saveRole}"]`);
@@ -704,13 +736,15 @@ TAB_LOADERS.posts = async () => {
     </section>`;
   panel.innerHTML = `
     <p id="posts-msg" class="muted" role="status"></p>
-    <h2>Nouveau billet</h2>
-    <form id="new-post" class="card">
+    <button class="toggle" data-toggle="box-post">+ Nouveau billet</button>
+    <section class="card" id="box-post" hidden>
+    <form id="new-post">
       <div class="field"><label>Titre</label><input name="title" required></div>
       <div class="field"><label>Texte</label><textarea name="body" rows="5"></textarea></div>
       <label class="check"><input type="checkbox" name="published"> Publier</label>
       <p><button type="submit">Créer</button></p>
     </form>
+    </section>
     ${posts.map(card).join('')}`;
 
   $('#new-post').addEventListener('submit', async e => {
@@ -772,6 +806,15 @@ async function pageAdmin() {
   const first = adminTabs();
   if (first) openTab(first);
 }
+
+// ---------- Boutons qui affichent un formulaire ----------
+// <button data-toggle="ID"> bascule l'affichage de l'élément #ID
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-toggle]');
+  if (!btn) return;
+  const box = document.getElementById(btn.dataset.toggle);
+  if (box) box.hidden = !box.hidden;
+});
 
 // ---------- Démarrage ----------
 const PAGES = {

@@ -152,8 +152,16 @@ async function visibleFields() {
   return rows[0] ? rows[0].value : [];
 }
 
+// Supprime les fichiers (chemins relatifs à la racine du stockage) ; ignore ceux qui n'existent plus
+async function deleteFiles(relativePaths) {
+  for (const rel of relativePaths.filter(Boolean)) {
+    await fs.rm(absolutePath(rel), { force: true }).catch(() => {});
+  }
+}
+
 module.exports = {
   PhotoError,
+  deleteFiles,
   ROOT,
   ensureStorage,
   absolutePath,

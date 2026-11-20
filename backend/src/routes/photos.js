@@ -1,7 +1,7 @@
 // Fichiers photo : miniature, aperçu, RAW. Contrôle de visibilité via la galerie.
 const router = require('express').Router();
 const { query } = require('../db/pool');
-const { attachUser, requireAuth } = require('../middlewares/auth');
+const { attachUser, requireAuth, hasPermission } = require('../middlewares/auth');
 const { canView, loadGallery } = require('./galleries');
 const photos = require('../services/photos');
 
@@ -53,6 +53,27 @@ router.get('/:id/:kind', attachUser, async (req, res) => {
   res.sendFile(photos.absolutePath(photo.file), err => {
     if (err && !res.headersSent) res.status(404).json({ error: 'fichier_introuvable' });
   });
+});
+
+// DELETE /api/photos/:id : supprimer une photo (propriétaire ou gestionnaire des utilisateurs)
+router.delete('/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
+
+  const { rows } = await query(
+    'SELECT owner_id, raw_path, preview_path, thumb_path FROM photos WHERE id = $1',
+    [id]
+  );
+  const photo = rows[0];
+  if (!photo) return res.status(404).json({ error: 'introuvable' });
+  if (photo.owner_id !== req.user.id && !hasPermission(req.user, 'user:manage')) {
+    return res.status(403).json({ error: 'acces_refuse' });
+  }
+
+  // Les métadonnées et les notes partent avec la photo (suppression en cascade)
+  await query('DELETE FROM photos WHERE id = $1', [id]);
+  await photos.deleteFiles([photo.raw_path, photo.preview_path, photo.thumb_path]);
+  res.json({ ok: true });
 });
 
 module.exports = router;
