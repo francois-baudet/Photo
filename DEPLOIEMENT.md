@@ -10,7 +10,7 @@ Réseau local ─► conteneur web (nginx, port 80) ─┬─► /      → fich
                                                               │
                                                               ▼ réseau Docker interne
                                                         conteneur db (PostgreSQL 16)
-                                                        volume db_data
+                                                        volume photo_db_data
 
                                           conteneur api ─► STORAGE_HOST_DIR (hôte, ou NAS)
 ```
@@ -22,10 +22,33 @@ Réseau local ─► conteneur web (nginx, port 80) ─┬─► /      → fich
 
 ---
 
+## État actuel (192.168.1.199)
+
+Ce qui tourne réellement, à jour à la date de rédaction. Pour le détail des commandes, voir les sections suivantes.
+
+| Élément | État |
+|---|---|
+| Projet | `/opt/photo`, branche `dev`, commit `fa24f21` |
+| `photo-db-1` | PostgreSQL 16, healthy, volume `photo_db_data`, aucun port publié |
+| `photo-api-1` | API Node 20, `127.0.0.1:3000` |
+| `photo-web-1` | nginx 1.27, front et proxy `/api/`, port 80 sur le réseau local |
+| Migrations | `001_schema.sql`, `002_seed.sql` appliquées |
+| Rôles | 4 (admin, membre, jury, visiteur) |
+| Règles de visibilité | 13 |
+| Utilisateurs | **0** : aucun compte, donc la connexion ne fonctionne pas encore |
+| Stockage | `/opt/photo/storage`, propriétaire uid 1000 |
+| HTTPS | non configuré |
+| Sauvegardes | non configurées |
+
+Autres services sur le même hôte, à ne pas toucher : `PFC_api` (port 3003), `PFC_client` (3004), `PFC_db` (PostgreSQL 17), `portainer` (8000, 9000, 9443). Un volume `db_data` inutilisé existe aussi : il ne vient pas de ce projet et n'a pas été supprimé.
+
+---
+
 ## 1. Prérequis sur le serveur
 
-- Debian 12 dans un conteneur LXC ou une VM Proxmox.
-- Docker Engine et le plugin Compose : suivre la doc officielle <https://docs.docker.com/engine/install/debian/>.
+- Ubuntu 22.04 LTS, installé directement sur l'hôte Proxmox (`dockerOclock`, 192.168.1.199). Ce n'est ni un LXC ni une VM.
+- Docker Engine 26 et le plugin Compose v2 (déjà installés). Pour une nouvelle installation, suivre la doc officielle <https://docs.docker.com/engine/install/ubuntu/>.
+- Accès SSH root ou utilisateur membre du groupe `docker`.
 - Une clé SSH autorisée sur GitHub (ou une *deploy key* sur le dépôt `francois-baudet/Photo`).
 
 Vérifier :
