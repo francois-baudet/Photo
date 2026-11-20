@@ -1,6 +1,11 @@
 # Image de l'API. Le contexte de build est la racine du dépôt (pour inclure db/migrations).
 FROM node:20-bookworm-slim
 
+# exiftool : lecture des métadonnées RAW (Nikon, Canon, Sony, Fuji, Adobe, DxO) et extraction des aperçus
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libimage-exiftool-perl \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Dépendances d'abord, pour profiter du cache Docker

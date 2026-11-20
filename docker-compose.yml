@@ -31,12 +31,29 @@ services:
       DATABASE_URL: postgres://photo:${DB_PASSWORD}@db:5432/photo
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET manquant dans .env}
       STORAGE_DIR: /srv/storage
+      # true si le site public est servi en HTTPS (cookie de session « Secure »)
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      INVITATION_DAYS: ${INVITATION_DAYS:-7}
     volumes:
       # Dossier des fichiers RAW, aperçus et miniatures sur l'hôte
       - ${STORAGE_HOST_DIR:-./storage}:/srv/storage
     ports:
       # Lié à localhost : seul le nginx de l'hôte peut atteindre l'API
-      - "127.0.0.1:3000:3000"
+      # Accessible sur le réseau local : le proxy openresty (pfc.fbaudet.fr) envoie /api/ ici
+      - "3000:3000"
+
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      # Front statique (maquette) et configuration du proxy
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # Accessible sur le réseau local (port 80)
+      - "80:80"
 
 volumes:
   db_data:

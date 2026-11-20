@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Galerie · Club photo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="gallery">
+  <header class="site">
+    <a class="brand" href="/index.html">Club photo</a>
+    <nav class="main" id="nav"></nav>
+    <span class="role-switch" id="user-status"></span>
+  </header>
+
+  <main id="main">
+    <p><a href="/pages/galeries.html">← Galeries</a></p>
+    <h1 id="gallery-title">Galerie</h1>
+    <div id="gallery-view">
+      <p class="inline">
+        <button class="toggle" id="btn-upload" data-toggle="upload-section" hidden>+ Déposer des photos</button>
+        <button class="toggle secondary" id="btn-visibility" data-toggle="visibility-section" hidden>Modifier la visibilité</button>
+        <button class="secondary" id="btn-delete-gallery" hidden>Supprimer la galerie</button>
+      </p>
+      <section id="photo-grid" class="grid"></section>
+      <section class="card" id="upload-section" hidden>
+        <h2>Déposer des photos</h2>
+        <p class="muted">RAW (NEF, CR2, CR3, ARW, RAF, DNG…) ou JPEG. 50 fichiers maximum, 200 Mo chacun.</p>
+        <form id="upload-form">
+          <input type="file" name="files" multiple accept=".nef,.nrw,.cr2,.cr3,.crw,.arw,.sr2,.srf,.raf,.dng,.orf,.rw2,.pef,.jpg,.jpeg">
+          <p><button type="submit">Envoyer</button></p>
+          <p id="upload-msg" class="muted" role="status"></p>
+        </form>
+      </section>
+      <section class="card" id="visibility-section" hidden>
+        <h2>Visibilité</h2>
+        <form id="visibility-form">
+          <select name="visibility"></select>
+          <button type="submit">Enregistrer</button>
+          <p id="visibility-msg" class="muted" role="status"></p>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site">Club photo</footer>
+  <script src="/js/app.js"></script>
+</body>
+</html>

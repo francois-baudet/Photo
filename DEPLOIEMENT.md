@@ -5,27 +5,50 @@ Written for : le porteur du projet, qui déploie et met à jour le club photo su
 ## Architecture
 
 ```
-Internet ─► nginx (hôte) ─┬─► /         → fichiers statiques du front (frontend/)
-                          └─► /api/     → 127.0.0.1:3000 ─► conteneur api (Node.js)
+Réseau local ─► conteneur web (nginx, port 80) ─┬─► /      → fichiers statiques du front (frontend/)
+                                                 └─► /api/  → conteneur api (Node.js, port 3000)
                                                               │
                                                               ▼ réseau Docker interne
                                                         conteneur db (PostgreSQL 16)
-                                                        volume db_data
+                                                        volume photo_db_data
 
                                           conteneur api ─► STORAGE_HOST_DIR (hôte, ou NAS)
 ```
 
 - La base n'est accessible que depuis le réseau Docker. Aucun port publié.
-- L'API n'écoute que sur `127.0.0.1:3000`.
+- L'API écoute sur le port 3000 du réseau local (`192.168.1.199:3000`). Le proxy openresty public (`pfc.fbaudet.fr`) envoie `/api/` vers ce port.
+- Le conteneur `web` est la seule porte d'entrée HTTP (port 80).
 - Les fichiers photo sont sur le disque de l'hôte (`STORAGE_HOST_DIR`), pas dans un conteneur.
+
+---
+
+## État actuel (192.168.1.199)
+
+Ce qui tourne réellement, à jour à la date de rédaction. Pour le détail des commandes, voir les sections suivantes.
+
+| Élément | État |
+|---|---|
+| Projet | `/opt/photo`, branche `dev`, commit `fa24f21` |
+| `photo-db-1` | PostgreSQL 16, healthy, volume `photo_db_data`, aucun port publié |
+| `photo-api-1` | API Node 20, `0.0.0.0:3000` (réseau local) |
+| `photo-web-1` | nginx 1.27, front et proxy `/api/`, port 80 sur le réseau local |
+| Migrations | `001_schema.sql`, `002_seed.sql` appliquées |
+| Rôles | 4 (admin, membre, jury, visiteur) |
+| Règles de visibilité | 13 |
+| Utilisateurs | **0** : aucun compte, donc la connexion ne fonctionne pas encore |
+| Stockage | `/opt/photo/storage`, propriétaire uid 1000 |
+| HTTPS | non configuré |
+| Sauvegardes | non configurées |
+
+Autres services sur le même hôte, à ne pas toucher : `PFC_api` (port 3003), `PFC_client` (3004), `PFC_db` (PostgreSQL 17), `portainer` (8000, 9000, 9443). Un volume `db_data` inutilisé existe aussi : il ne vient pas de ce projet et n'a pas été supprimé.
 
 ---
 
 ## 1. Prérequis sur le serveur
 
-- Debian 12 dans un conteneur LXC ou une VM Proxmox.
-- Docker Engine et le plugin Compose : suivre la doc officielle <https://docs.docker.com/engine/install/debian/>.
-- nginx installé sur l'hôte.
+- Ubuntu 22.04 LTS, installé directement sur l'hôte Proxmox (`dockerOclock`, 192.168.1.199). Ce n'est ni un LXC ni une VM.
+- Docker Engine 26 et le plugin Compose v2 (déjà installés). Pour une nouvelle installation, suivre la doc officielle <https://docs.docker.com/engine/install/ubuntu/>.
+- Accès SSH root ou utilisateur membre du groupe `docker`.
 - Une clé SSH autorisée sur GitHub (ou une *deploy key* sur le dépôt `francois-baudet/Photo`).
 
 Vérifier :
@@ -149,41 +172,21 @@ curl -s -X POST http://127.0.0.1:3000/api/auth/login \
 
 ---
 
-## 7. nginx de l'hôte
+## 7. Front et proxy (service `web`)
 
-Exemple de fichier `/etc/nginx/sites-available/photo` (adapter `server_name`) :
+nginx tourne dans un conteneur (`web`) défini dans `docker-compose.yml`. Il sert le dossier `frontend/` et redirige `/api/` vers le conteneur `api`. La configuration est dans `deploy/nginx/default.conf`.
 
-```nginx
-server {
-    listen 80;
-    server_name photo.exemple.fr;
+Le port 80 est publié sur le réseau local. Aucun nginx n'est à installer sur l'hôte.
 
-    root /opt/photo/frontend;
-    index index.html;
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 200M;   # les fichiers RAW sont volumineux
-    }
-
-    location / {
-        try_files $uri $uri/ =404;
-    }
-}
-```
-
-Activer et recharger :
+Vérifier après démarrage :
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/photo /etc/nginx/sites-enabled/photo
-sudo nginx -t
-sudo systemctl reload nginx
+docker compose up -d web
+curl -sI http://127.0.0.1/ | head -1          # HTTP/1.1 200 OK
+curl -s http://127.0.0.1/api/galleries        # {"galleries":[]}
 ```
 
-Pour le HTTPS, ajouter un certificat (par exemple avec `certbot --nginx -d photo.exemple.fr`).
+Pour le HTTPS, il faudra un certificat et un second bloc `listen 443 ssl` dans `deploy/nginx/default.conf`. Ce n'est pas encore fait.
 
 ---
 
@@ -272,5 +275,6 @@ Proxmox : sauvegarde `vzdump` du conteneur LXC (ou snapshot de la VM). Elle couv
 ## Notes
 
 - Le premier démarrage ne crée aucun utilisateur : voir la section 6.
-- Les routes concours, billets, admin et dépôt de photos renvoient encore `501` (non implémentées).
-- Le front (`frontend/`) est une maquette statique : il n'est pas encore branché sur l'API.
+- Fonctions implémentées : connexion et invitations, droits configurables par rôle, galeries et visibilité, dépôt RAW/JPEG avec métadonnées (exiftool) et aperçus (sharp), concours (jurés, membres, notes 0 à 20, deux classements), billets, dashboard admin (utilisateurs, rôles, invitations, visibilité, billets, réglages).
+- Le conteneur `api` embarque `exiftool` et `sharp` : une reconstruction de l'image (`docker compose build api`) est nécessaire après chaque mise à jour du backend.
+- Le front (`frontend/`) est branché sur l'API ; la session est un cookie HttpOnly (`photo_session`). Pour le HTTPS, définir `COOKIE_SECURE=true` dans `.env`.
