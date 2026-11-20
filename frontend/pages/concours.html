@@ -22,7 +22,7 @@
         <h2>Nouveau concours</h2>
         <form id="contest-form">
           <div class="field"><label for="c-title">Titre</label><input id="c-title" name="title" required></div>
-          <div class="field"><label for="c-jury">Nombre de jurés (1 à 20)</label><input id="c-jury" name="juryCount" type="number" min="1" max="20" value="2" required></div>
+          <div class="field"><label for="c-jury">Nombre de jurés (0 à 20 ; 0 = seuls les membres notent)</label><input id="c-jury" name="juryCount" type="number" min="0" max="20" value="2" required></div>
           <label class="check"><input type="checkbox" name="autoNotation"> Autoriser l’auto-notation</label>
           <div class="field">
             <label for="c-notes">Visibilité des notes</label>

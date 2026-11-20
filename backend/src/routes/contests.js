@@ -85,7 +85,7 @@ router.get('/', requireAuth, async (req, res) => {
 router.post('/', requireAuth, requirePermission('contest:manage'), async (req, res) => {
   const { title, juryCount, autoNotation, notesVisibility, memberIds = [], jurorIds = [] } = req.body || {};
   if (typeof title !== 'string' || !title.trim() || title.trim().length > 120) return bad(res, 'titre_invalide');
-  if (!Number.isInteger(juryCount) || juryCount < 1 || juryCount > 20) return bad(res, 'nombre_de_jures_invalide');
+  if (!Number.isInteger(juryCount) || juryCount < 0 || juryCount > 20) return bad(res, 'nombre_de_jures_invalide');
   if (notesVisibility !== undefined && !NOTES_VISIBILITY.includes(notesVisibility)) return bad(res, 'visibilite_notes_invalide');
   if (autoNotation !== undefined && typeof autoNotation !== 'boolean') return bad(res, 'auto_notation_invalide');
   if (!idList(memberIds) || !idList(jurorIds)) return bad(res, 'participants_invalides');
@@ -172,33 +172,93 @@ router.get('/:id', requireAuth, async (req, res) => {
   });
 });
 
-// PATCH /api/contests/:id  { title?, status? }  (brouillon -> ouvert -> clos)
+// PATCH /api/contests/:id  (gestionnaire des concours)
+// { title?, status?, juryCount?, autoNotation?, notesVisibility?, memberIds?, jurorIds? }
+// - statut : brouillon -> ouvert -> clos
+// - brouillon : tous les réglages et participants sont modifiables
+// - ouvert : seuls les membres invités et la visibilité des notes restent modifiables
+// - clos : aucune modification
 router.patch('/:id', requireAuth, requirePermission('contest:manage'), async (req, res) => {
   const contest = await loadContest(Number(req.params.id));
   if (!contest) return res.status(404).json({ error: 'introuvable' });
+  if (contest.status === 'clos') return bad(res, 'concours_clos');
 
-  const { title, status } = req.body || {};
+  const { title, status, juryCount, autoNotation, notesVisibility, memberIds, jurorIds } = req.body || {};
+  const isDraft = contest.status === 'brouillon';
+
   if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.trim().length > 120)) {
     return bad(res, 'titre_invalide');
   }
+  if (juryCount !== undefined && (!Number.isInteger(juryCount) || juryCount < 0 || juryCount > 20)) {
+    return bad(res, 'nombre_de_jures_invalide');
+  }
+  if (autoNotation !== undefined && typeof autoNotation !== 'boolean') return bad(res, 'auto_notation_invalide');
+  if (notesVisibility !== undefined && !NOTES_VISIBILITY.includes(notesVisibility)) return bad(res, 'visibilite_notes_invalide');
+  if (memberIds !== undefined && !idList(memberIds)) return bad(res, 'participants_invalides');
+  if (jurorIds !== undefined && !idList(jurorIds)) return bad(res, 'participants_invalides');
+  if (!isDraft && (juryCount !== undefined || autoNotation !== undefined || jurorIds !== undefined)) {
+    return bad(res, 'concours_ouvert_reglages_figes');
+  }
+
   if (status !== undefined) {
     if (!STATUSES.includes(status)) return bad(res, 'statut_invalide');
     const order = STATUSES.indexOf(contest.status);
     if (STATUSES.indexOf(status) !== order + 1) return bad(res, 'transition_invalide');
-    if (status === 'ouvert') {
-      const { rows } = await query('SELECT COUNT(*)::int AS n FROM contest_jurors WHERE contest_id = $1', [contest.id]);
-      if (rows[0].n !== contest.jury_count) return bad(res, 'jures_incomplets');
-    }
   }
-  await withTransaction(async client => {
-    await client.query(
-      'UPDATE contests SET title = COALESCE($1, title), status = COALESCE($2, status) WHERE id = $3',
-      [title ? title.trim() : null, status || null, contest.id]
+  const newJuryCount = juryCount !== undefined ? juryCount : contest.jury_count;
+  if (status === 'ouvert') {
+    const { rows } = await query(
+      'SELECT COUNT(*)::int AS n FROM contest_jurors WHERE contest_id = $1',
+      [contest.id]
     );
-    if (title) {
-      await client.query('UPDATE galleries SET title = $1 WHERE id = $2', [title.trim(), contest.gallery_id]);
-    }
-  });
+    if (rows[0].n !== newJuryCount) return bad(res, 'jures_incomplets');
+  }
+
+  try {
+    await withTransaction(async client => {
+      await client.query(
+        `UPDATE contests SET
+            title = COALESCE($1, title),
+            status = COALESCE($2, status),
+            jury_count = $3,
+            auto_notation = COALESCE($4, auto_notation),
+            notes_visibility = COALESCE($5, notes_visibility)
+          WHERE id = $6`,
+        [
+          title ? title.trim() : null,
+          status || null,
+          newJuryCount,
+          autoNotation ?? null,
+          notesVisibility ?? null,
+          contest.id,
+        ]
+      );
+      if (title) {
+        await client.query('UPDATE galleries SET title = $1 WHERE id = $2', [title.trim(), contest.gallery_id]);
+      }
+      if (memberIds !== undefined) {
+        await client.query('DELETE FROM contest_members WHERE contest_id = $1', [contest.id]);
+        for (const userId of memberIds) {
+          await client.query(
+            'INSERT INTO contest_members (contest_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [contest.id, userId]
+          );
+        }
+      }
+      if (jurorIds !== undefined) {
+        await client.query('DELETE FROM contest_jurors WHERE contest_id = $1', [contest.id]);
+        for (const userId of jurorIds) {
+          await client.query(
+            'INSERT INTO contest_jurors (contest_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [contest.id, userId]
+          );
+        }
+      }
+    });
+  } catch (err) {
+    if (err.code === '23503') return bad(res, 'participant_inconnu');
+    throw err;
+  }
   res.json({ ok: true });
 });
 

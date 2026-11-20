@@ -30,7 +30,8 @@ const ERRORS = {
   fichier_trop_volumineux: 'Fichier trop volumineux.',
   trop_de_fichiers: 'Trop de fichiers à la fois.',
   aucun_fichier: 'Aucun fichier sélectionné.',
-  nombre_de_jures_invalide: 'Nombre de jurés invalide (1 à 20).',
+  nombre_de_jures_invalide: 'Nombre de jurés invalide (0 à 20).',
+  concours_ouvert_reglages_figes: 'Le concours est ouvert : seuls les membres et la visibilité des notes sont modifiables.',
   jures_incomplets: 'Le nombre de jurés n’est pas encore atteint.',
   transition_invalide: 'Changement de statut impossible.',
   concours_non_ouvert: 'Le concours n’est pas ouvert à la notation.',
@@ -457,8 +458,67 @@ async function pageContest() {
       `<p><a class="btn" href="/pages/galerie.html?id=${contest.galleryId}">Déposer mes photos dans la galerie du concours</a></p>`);
   }
 
+  await renderContestEditor(contest, id);
   renderPhotos(contest, photos);
   if (contest.notesVisible) await renderRanking(id);
+}
+
+// Formulaire de modification d'un concours (gestionnaire des concours).
+// Brouillon : tous les réglages. Ouvert : membres et visibilité des notes seulement.
+async function renderContestEditor(contest, id) {
+  if (!can(ME, 'contest:manage') || contest.status === 'clos') return;
+  const { users } = await api('/contests/people');
+  const memberIds = (Array.isArray(contest.members) ? contest.members : []).map(m => m.id);
+  const jurorIds = (Array.isArray(contest.jurors) ? contest.jurors : []).map(j => j.id);
+  const draft = contest.status === 'brouillon';
+  const boxes = (name, selected, disabled) => users.map(u => `
+    <label class="check"><input type="checkbox" name="${name}" value="${u.id}"${selected.includes(u.id) ? ' checked' : ''}${disabled ? ' disabled' : ''}> ${esc(u.displayName)} <span class="muted">(${esc(u.role)})</span></label>`).join('');
+
+  $('#contest-view').insertAdjacentHTML('beforeend', `
+    <button class="toggle" data-toggle="contest-edit">Modifier le concours</button>
+    <section class="card" id="contest-edit" hidden>
+      <h2>Modifier le concours</h2>
+      ${draft ? '' : '<p class="muted">Le concours est ouvert : seuls les membres invités et la visibilité des notes peuvent être modifiés.</p>'}
+      <form id="contest-edit-form">
+        <div class="field"><label>Titre</label><input name="title" value="${esc(contest.title)}" required></div>
+        <div class="field"><label>Nombre de jurés (0 à 20 ; 0 = seuls les membres notent)</label>
+          <input name="juryCount" type="number" min="0" max="20" value="${contest.juryCount}"${draft ? '' : ' disabled'}></div>
+        <label class="check"><input type="checkbox" name="autoNotation"${contest.autoNotation ? ' checked' : ''}${draft ? '' : ' disabled'}> Autoriser l’auto-notation</label>
+        <div class="field"><label>Visibilité des notes</label>
+          <select name="notesVisibility">
+            <option value="fin"${contest.notesVisibility === 'fin' ? ' selected' : ''}>À la fin du concours</option>
+            <option value="pendant"${contest.notesVisibility === 'pendant' ? ' selected' : ''}>Pendant le concours</option>
+          </select></div>
+        <h3>Membres invités</h3>
+        <div class="checks">${boxes('members', memberIds, false)}</div>
+        <h3>Jurés</h3>
+        <div class="checks">${boxes('jurors', jurorIds, !draft)}</div>
+        <p><button type="submit">Enregistrer</button> <span id="contest-edit-msg" class="muted" role="status"></span></p>
+      </form>
+    </section>`);
+
+  $('#contest-edit-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.target;
+    const pick = name => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map(i => Number(i.value));
+    const body = {
+      title: field(form, 'title').value,
+      notesVisibility: field(form, 'notesVisibility').value,
+      memberIds: pick('members'),
+    };
+    if (draft) {
+      body.juryCount = Number(field(form, 'juryCount').value);
+      body.autoNotation = field(form, 'autoNotation').checked;
+      body.jurorIds = pick('jurors');
+    }
+    try {
+      await api(`/contests/${id}`, { method: 'PATCH', body });
+      say($('#contest-edit-msg'), 'Concours enregistré.', true);
+      setTimeout(() => location.reload(), 600);
+    } catch (err) {
+      say($('#contest-edit-msg'), err.message);
+    }
+  });
 }
 
 function renderPhotos(contest, photos) {
