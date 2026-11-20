@@ -298,35 +298,14 @@ async function pageGallery() {
           </button>
           <figcaption class="info">
             ${esc(p.title)}
-            ${p.rawUrl ? `<small><a href="${p.rawUrl}">Télécharger le RAW</a></small>` : ''}
-            ${p.canRotate ? `<span class="inline"><button class="secondary" data-rotate="${p.id}" data-dir="ccw" title="Rotation à gauche" aria-label="Rotation à gauche">⟲</button><button class="secondary" data-rotate="${p.id}" data-dir="cw" title="Rotation à droite" aria-label="Rotation à droite">⟳</button></span>` : ''}
-            ${p.canDelete ? `<button class="secondary" data-del-photo="${p.id}">Supprimer</button>` : ''}
+            ${p.canRotate || p.canDelete || p.rawUrl ? `<button class="tool-btn" data-tools="${i}" title="Outils de la photo" aria-label="Outils de la photo">🔧</button>` : ''}
           </figcaption>
         </figure>`).join('')
     : '<p class="muted">Aucune photo pour le moment.</p>';
 
   registerLightbox(photos);
 
-  document.querySelectorAll('[data-rotate]').forEach(btn => btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    try {
-      await api(`/photos/${btn.dataset.rotate}/rotate`, { method: 'POST', body: { direction: btn.dataset.dir } });
-      location.reload();
-    } catch (err) {
-      btn.disabled = false;
-      alert(err.message);
-    }
-  }));
-
-  document.querySelectorAll('[data-del-photo]').forEach(btn => btn.addEventListener('click', async () => {
-    if (!confirm('Supprimer cette photo définitivement ?')) return;
-    try {
-      await api(`/photos/${btn.dataset.delPhoto}`, { method: 'DELETE' });
-      location.reload();
-    } catch (err) {
-      alert(err.message);
-    }
-  }));
+  document.querySelectorAll('[data-tools]').forEach(btn => btn.addEventListener('click', () => openToolsModal(photos[Number(btn.dataset.tools)])));
 
   if (gallery.canEdit) {
     const del = $('#btn-delete-gallery');
@@ -991,6 +970,54 @@ document.addEventListener('click', e => {
   const thumb = e.target.closest('[data-lb]');
   if (thumb) openLightbox(Number(thumb.dataset.lb));
 });
+
+// ---------- Outils d'une photo : rotation, RAW, suppression ----------
+function openToolsModal(p) {
+  const modal = document.createElement('div');
+  modal.className = 'meta-modal';
+  const actions = [];
+  if (p.canRotate) {
+    actions.push('<button class="secondary" data-act="ccw">⟲ Rotation à gauche</button>');
+    actions.push('<button class="secondary" data-act="cw">⟳ Rotation à droite</button>');
+  }
+  if (p.rawUrl) actions.push(`<a class="btn" href="${p.rawUrl}">Télécharger le RAW</a>`);
+  if (p.canDelete) actions.push('<button class="secondary" data-act="delete">Supprimer la photo</button>');
+  modal.innerHTML = `<div class="meta-box" role="dialog" aria-label="Outils de la photo">
+      <div class="inline" style="justify-content:space-between"><strong>${esc(p.title)}</strong>
+        <button class="secondary" data-act="close">Fermer</button></div>
+      <div class="tools-list">${actions.join('') || '<p class="muted">Aucune action disponible.</p>'}</div>
+      <p id="tools-msg" class="muted" role="status"></p>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  modal.addEventListener('click', async e => {
+    if (e.target === modal) return close();
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === 'close') return close();
+    if (act === 'cw' || act === 'ccw') {
+      btn.disabled = true;
+      try {
+        await api(`/photos/${p.id}/rotate`, { method: 'POST', body: { direction: act } });
+        location.reload();
+      } catch (err) {
+        btn.disabled = false;
+        say($('#tools-msg'), err.message);
+      }
+    }
+    if (act === 'delete') {
+      if (!confirm('Supprimer cette photo définitivement ?')) return;
+      try {
+        await api(`/photos/${p.id}`, { method: 'DELETE' });
+        location.reload();
+      } catch (err) {
+        say($('#tools-msg'), err.message);
+      }
+    }
+  });
+}
 
 // ---------- Survol des moyennes : détail des notes ----------
 let SCORES_CACHE = null;
