@@ -160,3 +160,30 @@ footer.site {
   h1 { font-size: 1.35rem; }
   .hero { padding: 28px var(--gutter); }
 }
+
+/* ---- Ajouts : formulaires, listes, cases à cocher ---- */
+[hidden] { display: none !important; }
+
+.grid-1 { display: grid; gap: var(--gutter); margin-bottom: var(--gutter); }
+
+a.gallery-link { display: block; text-decoration: none; color: inherit; }
+a.gallery-link:hover h2 { color: var(--accent); }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px 16px;
+  margin-bottom: 12px;
+}
+
+.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.thumb.mini { width: 72px; height: 54px; border-radius: 6px; }
+
+table button, td button { padding: 4px 10px; }

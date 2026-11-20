@@ -1,173 +1,801 @@
-/* Front branché sur l'API.
-   - Connexion par identifiant et mot de passe, token JWT conservé dans le navigateur.
-   - Galeries : liste selon le rôle, création pour les membres et admins.
-   - Concours et billets : pas encore branchés au backend. */
+/* Front du club photo, branché sur l'API.
+   Session par cookie HttpOnly : rien n'est stocké dans le navigateur.
+   Chaque page appelle sa fonction selon l'attribut data-page du <body>. */
 
-const API = "/api";
-const TOKEN_KEY = "photo-token";
-const VISIBILITIES = ["public", "membres", "concours", "jury", "admin"];
+const API = '/api';
+const VISIBILITIES = ['public', 'membres', 'concours', 'jury', 'admin'];
+const METADATA_LABELS = {
+  camera: 'Boîtier', lens: 'Objectif', iso: 'ISO', aperture: 'Ouverture',
+  shutter: 'Vitesse', focal_length: 'Focale', date: 'Date',
+};
+const PERMISSIONS_ADMIN_TABS = {
+  users: 'user:manage', invites: 'invite:create', roles: 'role:manage',
+  visibility: 'role:manage', posts: 'post:manage', settings: 'settings:manage',
+};
+const ERRORS = {
+  titre_invalide: 'Titre invalide.',
+  visibilite_invalide: 'Visibilité invalide.',
+  identifiants_invalides: 'Identifiant ou mot de passe incorrect.',
+  identifiant_ou_mot_de_passe_manquant: 'Renseignez l’identifiant et le mot de passe.',
+  invitation_invalide: 'Invitation invalide ou expirée.',
+  identifiant_deja_pris: 'Cet identifiant est déjà utilisé.',
+  identifiant_invalide: 'Identifiant invalide (3 à 32 caractères : lettres, chiffres, _ . -).',
+  mot_de_passe_trop_court: 'Mot de passe trop court (8 caractères minimum).',
+  champs_manquants: 'Champs manquants.',
+  role_invalide: 'Rôle invalide.',
+  acces_refuse: 'Accès refusé.',
+  non_connecte: 'Connectez-vous pour continuer.',
+  session_invalide: 'Session expirée, reconnectez-vous.',
+  utilisateur_inactif: 'Compte désactivé.',
+  fichier_trop_volumineux: 'Fichier trop volumineux.',
+  trop_de_fichiers: 'Trop de fichiers à la fois.',
+  aucun_fichier: 'Aucun fichier sélectionné.',
+  nombre_de_jures_invalide: 'Nombre de jurés invalide (1 à 20).',
+  jures_incomplets: 'Le nombre de jurés n’est pas encore atteint.',
+  transition_invalide: 'Changement de statut impossible.',
+  concours_non_ouvert: 'Le concours n’est pas ouvert à la notation.',
+  concours_clos: 'Le concours est clos.',
+  non_autorise_a_noter: 'Vous ne pouvez pas noter ce concours.',
+  auto_notation_interdite: 'L’auto-notation est désactivée pour ce concours.',
+  note_invalide: 'Note invalide (0 à 20).',
+  photo_hors_concours: 'Cette photo n’est pas dans le concours.',
+  photo_non_autorisee: 'Vous ne pouvez inscrire que vos propres photos.',
+  photos_invalides: 'Sélectionnez au moins une photo.',
+  notes_non_visibles: 'Les notes ne sont pas encore visibles.',
+  role_utilise: 'Ce rôle est encore attribué à des utilisateurs.',
+  role_protege: 'Ce rôle ne peut pas être supprimé.',
+  role_admin_protege: 'Les droits du rôle admin ne peuvent pas être modifiés.',
+  role_existant: 'Ce rôle existe déjà.',
+  nom_invalide: 'Nom de rôle invalide (minuscules, chiffres, - et _).',
+  libelle_manquant: 'Libellé manquant.',
+  valeur_invalide: 'Valeur invalide.',
+  visibilite_notes_invalide: 'Option de visibilité des notes invalide.',
+  auto_notation_invalide: 'Option d’auto-notation invalide.',
+  participants_invalides: 'Liste de participants invalide.',
+  participant_inconnu: 'Un participant n’existe pas.',
+  statut_invalide: 'Statut invalide.',
+  titre_manquant: 'Titre manquant.',
+  contenu_manquant: 'Contenu manquant.',
+  publication_invalide: 'Option de publication invalide.',
+  erreur_serveur: 'Erreur du serveur. Réessayez.',
+};
 
-// ---------- Stockage du token (préférence de navigateur, pas une donnée métier) ----------
-function getToken() {
-  try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
-}
-function setToken(token) {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch (e) { /* stockage indisponible : la session ne persiste pas */ }
+const $ = (sel, root = document) => root.querySelector(sel);
+const qs = name => new URLSearchParams(location.search).get(name);
+const msg = code => ERRORS[code] || code || 'Erreur.';
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+const can = (user, code) => !!(user && user.permissions && user.permissions.includes(code));
+const fmtDate = d => (d ? new Date(d).toLocaleDateString('fr-FR') : '');
+
+function say(el, text, ok = false) {
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = ok ? 'var(--accent)' : '';
 }
 
 // ---------- Client API ----------
-async function api(path, { method = "GET", body } = {}) {
-  const headers = { Accept: "application/json" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(API + path, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-
-  let data = null;
-  try { data = await res.json(); } catch (e) { /* réponse sans JSON */ }
-
-  if (res.status === 401) setToken(null); // token expiré ou invalide
+async function api(path, opts = {}) {
+  const init = { method: opts.method || 'GET', credentials: 'same-origin', headers: {} };
+  if (opts.form) {
+    init.body = opts.form;
+  } else if (opts.body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(API + path, init);
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => null);
   if (!res.ok) {
-    const error = new Error((data && data.error) || `Erreur ${res.status}`);
-    error.status = res.status;
-    throw error;
+    const err = new Error(msg(data && data.error));
+    err.status = res.status;
+    err.code = data && data.error;
+    throw err;
   }
   return data;
 }
 
-// ---------- En-tête : état de connexion ----------
-async function renderUserStatus() {
-  const box = document.getElementById("user-status");
-  if (!box) return null;
+// ---------- Session et en-tête ----------
+let ME = null;
 
-  if (!getToken()) {
-    box.innerHTML = `<a href="${rootPath()}pages/login.html">Connexion</a>`;
-    return null;
-  }
+async function loadMe() {
   try {
-    const { user } = await api("/auth/me");
-    box.innerHTML = `${user.displayName} <span class="badge">${user.role}</span> · <a href="#" id="logout">Déconnexion</a>`;
-    document.getElementById("logout").addEventListener("click", e => {
+    ME = (await api('/auth/me')).user;
+  } catch {
+    ME = null;
+  }
+  return ME;
+}
+
+function renderHeader() {
+  const nav = $('#nav');
+  if (!nav) return;
+  const here = location.pathname === '/' ? '/index.html' : location.pathname;
+
+  const links = [
+    ['/index.html', 'Accueil'],
+    ['/pages/galeries.html', 'Galeries'],
+    ['/pages/concours.html', 'Concours'],
+  ];
+  const adminCodes = Object.values(PERMISSIONS_ADMIN_TABS);
+  if (ME && adminCodes.some(code => can(ME, code))) links.push(['/pages/admin.html', 'Administration']);
+
+  nav.innerHTML = links
+    .map(([href, label]) => `<a href="${href}"${here === href ? ' aria-current="page"' : ''}>${label}</a>`)
+    .join('');
+
+  const status = $('#user-status');
+  if (!status) return;
+  status.innerHTML = ME
+    ? `${esc(ME.displayName)} <span class="badge">${esc(ME.role)}</span> · <a href="#" id="logout">Déconnexion</a>`
+    : '<a href="/pages/login.html">Connexion</a>';
+
+  const logout = $('#logout');
+  if (logout) {
+    logout.addEventListener('click', async e => {
       e.preventDefault();
-      setToken(null);
-      location.href = rootPath() + "index.html";
+      await api('/auth/logout', { method: 'POST' }).catch(() => {});
+      location.href = '/index.html';
     });
-    return user;
-  } catch (e) {
-    box.innerHTML = `<a href="${rootPath()}pages/login.html">Connexion</a>`;
-    return null;
   }
 }
 
-// Chemin relatif vers la racine du site, selon la profondeur de la page
-function rootPath() {
-  return location.pathname.includes("/pages/") ? "../" : "";
+function requireLogin() {
+  if (ME) return true;
+  const main = $('#main');
+  if (main) main.innerHTML = '<p class="muted">Connectez-vous pour accéder à cette page. <a href="/pages/login.html">Connexion</a></p>';
+  return false;
 }
 
-// ---------- Connexion ----------
-function initLogin() {
-  const form = document.getElementById("login-form");
-  if (!form) return;
-  const msg = document.getElementById("login-msg");
+// ---------- Accueil ----------
+async function pageHome() {
+  const site = await api('/site').catch(() => ({ clubName: 'Club photo' }));
+  document.title = site.clubName;
+  $('#club-name').textContent = site.clubName;
 
-  form.addEventListener("submit", async e => {
+  const { posts } = await api('/posts').catch(() => ({ posts: [] }));
+  $('#posts').innerHTML = posts.length
+    ? posts.map(p => `
+        <article class="card">
+          <h3>${esc(p.title)}</h3>
+          <div style="white-space:pre-line">${esc(p.body)}</div>
+          <p class="muted">${esc(p.author)}${p.publishedAt ? ' · ' + fmtDate(p.publishedAt) : ''}</p>
+        </article>`).join('')
+    : '<p class="muted">Pas encore de billet.</p>';
+}
+
+// ---------- Connexion et inscription ----------
+function pageLogin() {
+  const form = $('#login-form');
+  form.addEventListener('submit', async e => {
     e.preventDefault();
-    msg.textContent = "Connexion…";
-    const username = form.user.value.trim();
-    const password = form.pwd.value;
+    say($('#login-msg'), 'Connexion…');
     try {
-      const { token } = await api("/auth/login", { method: "POST", body: { username, password } });
-      setToken(token);
-      location.href = "../index.html";
+      await api('/auth/login', {
+        method: 'POST',
+        body: { username: form.user.value.trim(), password: form.pwd.value },
+      });
+      location.href = '/index.html';
     } catch (err) {
-      msg.textContent = err.status === 401
-        ? "Identifiant ou mot de passe incorrect."
-        : `Connexion impossible : ${err.message}`;
+      say($('#login-msg'), err.message);
+    }
+  });
+}
+
+function pageRegister() {
+  const token = qs('token');
+  const form = $('#register-form');
+  if (!token) {
+    form.hidden = true;
+    say($('#register-msg'), 'Lien d’invitation incomplet.');
+    return;
+  }
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    say($('#register-msg'), 'Création du compte…');
+    try {
+      await api('/auth/register', {
+        method: 'POST',
+        body: {
+          token,
+          username: form.user.value.trim(),
+          displayName: form.displayName.value.trim(),
+          password: form.pwd.value,
+        },
+      });
+      location.href = '/pages/login.html';
+    } catch (err) {
+      say($('#register-msg'), err.message);
     }
   });
 }
 
 // ---------- Galeries ----------
-function renderGalleryList(galleries) {
-  const list = document.getElementById("gallery-list");
-  if (!galleries.length) {
-    list.innerHTML = `<p class="muted">Aucune galerie accessible pour le moment.</p>`;
-    return;
-  }
-  list.innerHTML = galleries.map(g => `
-    <article class="card">
-      <h2>${escapeHtml(g.title)}</h2>
-      <p class="muted">Par ${escapeHtml(g.author)} · ${g.photoCount} photo(s)</p>
-      <span class="badge">${g.visibility}</span>
-    </article>
-  `).join("");
+async function refreshGalleries() {
+  const { galleries } = await api('/galleries');
+  $('#gallery-list').innerHTML = galleries.length
+    ? galleries.map(g => `
+        <a class="card gallery-link" href="/pages/galerie.html?id=${g.id}">
+          <h2>${esc(g.title)}</h2>
+          <p class="muted">Par ${esc(g.author)} · ${g.photoCount} photo(s)</p>
+          <span class="badge">${esc(g.visibility)}</span>
+        </a>`).join('')
+    : '<p class="muted">Aucune galerie accessible.</p>';
 }
 
-async function loadGalleries() {
-  const list = document.getElementById("gallery-list");
-  if (!list) return;
-  try {
-    const { galleries } = await api("/galleries");
-    renderGalleryList(galleries);
-  } catch (e) {
-    list.innerHTML = `<p class="muted">Impossible de charger les galeries : ${escapeHtml(e.message)}</p>`;
-  }
-}
+async function pageGalleries() {
+  await refreshGalleries();
+  if (!can(ME, 'gallery:create')) return;
 
-function initGalleryForm(user) {
-  const section = document.getElementById("new-gallery");
-  const form = document.getElementById("gallery-form");
-  if (!section || !form) return;
-
-  // Seuls les membres et admins peuvent créer une galerie
-  if (!user || !["admin", "membre"].includes(user.role)) return;
-  section.hidden = false;
-
-  const select = form.visibility;
-  select.innerHTML = VISIBILITIES.map(v => `<option value="${v}">${v}</option>`).join("");
-
-  const msg = document.getElementById("gallery-msg");
-  form.addEventListener("submit", async e => {
+  const form = $('#gallery-form');
+  $('#new-gallery').hidden = false;
+  $('#g-visibility').innerHTML = VISIBILITIES.map(v => `<option value="${v}">${v}</option>`).join('');
+  form.addEventListener('submit', async e => {
     e.preventDefault();
-    msg.textContent = "Création…";
     try {
-      await api("/galleries", {
-        method: "POST",
+      await api('/galleries', {
+        method: 'POST',
         body: { title: form.title.value, visibility: form.visibility.value },
       });
       form.reset();
-      msg.textContent = "Galerie créée.";
-      loadGalleries();
+      say($('#gallery-msg'), 'Galerie créée.', true);
+      await refreshGalleries();
     } catch (err) {
-      msg.textContent = `Erreur : ${err.message}`;
+      say($('#gallery-msg'), err.message);
     }
   });
 }
 
-// ---------- Utilitaires ----------
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  })[c]);
+const metaLines = meta => Object.entries(meta || {})
+  .filter(([, v]) => v !== null && v !== undefined && v !== '')
+  .map(([k, v]) => `${esc(METADATA_LABELS[k] || k)} : ${esc(v)}`)
+  .join('<br>');
+
+async function pageGallery() {
+  const id = Number(qs('id'));
+  const view = $('#gallery-view');
+  if (!id) {
+    view.textContent = 'Galerie introuvable.';
+    return;
+  }
+
+  let data;
+  try {
+    data = await api(`/galleries/${id}`);
+  } catch (err) {
+    view.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+    return;
+  }
+  const { gallery, photos } = data;
+  $('#gallery-title').textContent = gallery.title;
+
+  $('#photo-grid').innerHTML = photos.length
+    ? photos.map(p => `
+        <figure class="photo">
+          <a href="${p.previewUrl || '#'}" target="_blank" rel="noopener">
+            <div class="thumb" style="${p.thumbUrl ? `background-image:url('${p.thumbUrl}');background-size:cover;background-position:center` : ''}"></div>
+          </a>
+          <figcaption class="info">
+            ${esc(p.title)}
+            <small>${metaLines(p.metadata) || 'Pas de métadonnées'}</small>
+            ${p.rawUrl ? `<small><a href="${p.rawUrl}">Télécharger le RAW</a></small>` : ''}
+          </figcaption>
+        </figure>`).join('')
+    : '<p class="muted">Aucune photo pour le moment.</p>';
+
+  if (gallery.canEdit) {
+    $('#visibility-section').hidden = false;
+    const edit = $('#visibility-form');
+    edit.visibility.innerHTML = VISIBILITIES
+      .map(v => `<option value="${v}"${v === gallery.visibility ? ' selected' : ''}>${v}</option>`).join('');
+    edit.addEventListener('submit', async e => {
+      e.preventDefault();
+      try {
+        await api(`/galleries/${id}`, { method: 'PATCH', body: { visibility: edit.visibility.value } });
+        say($('#visibility-msg'), 'Visibilité enregistrée.', true);
+      } catch (err) {
+        say($('#visibility-msg'), err.message);
+      }
+    });
+  }
+
+  if (gallery.canEdit && can(ME, 'photo:upload')) {
+    $('#upload-section').hidden = false;
+    const form = $('#upload-form');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const files = form.files.files;
+      if (!files.length) return say($('#upload-msg'), 'Aucun fichier sélectionné.');
+      const body = new FormData();
+      for (const file of files) body.append('files', file);
+      say($('#upload-msg'), `Envoi de ${files.length} fichier(s)…`);
+      try {
+        const result = await api(`/galleries/${id}/photos`, { method: 'POST', form: body });
+        const rejected = result.rejected.map(r => `${r.name} : ${msg(r.error)}`).join(' · ');
+        say($('#upload-msg'), `${result.imported.length} photo(s) importée(s).${rejected ? ' Refusées : ' + rejected : ''}`, !rejected);
+        if (result.imported.length) setTimeout(() => location.reload(), 1200);
+      } catch (err) {
+        say($('#upload-msg'), err.message);
+      }
+    });
+  }
+}
+
+// ---------- Concours ----------
+async function pageContests() {
+  const { contests } = await api('/contests');
+  $('#contest-list').innerHTML = contests.length
+    ? contests.map(c => `
+        <a class="card gallery-link" href="/pages/concours.html?id=${c.id}">
+          <h2>${esc(c.title)}</h2>
+          <p class="muted">${esc(c.status)} · ${c.juryCount} juré(s)
+            ${c.juror ? ' · vous êtes juré' : ''}${c.member ? ' · vous êtes membre' : ''}</p>
+        </a>`).join('')
+    : '<p class="muted">Aucun concours.</p>';
+
+  if (!can(ME, 'contest:manage')) return;
+  $('#new-contest').hidden = false;
+
+  const { users } = await api('/contests/people');
+  const boxes = (name) => users.map(u => `
+    <label class="check"><input type="checkbox" name="${name}" value="${u.id}"> ${esc(u.displayName)} <span class="muted">(${esc(u.role)})</span></label>`).join('');
+  const form = $('#contest-form');
+  $('#members-box').innerHTML = boxes('members');
+  $('#jurors-box').innerHTML = boxes('jurors');
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const pick = name => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map(i => Number(i.value));
+    try {
+      const { id } = await api('/contests', {
+        method: 'POST',
+        body: {
+          title: form.title.value,
+          juryCount: Number(form.juryCount.value),
+          autoNotation: form.autoNotation.checked,
+          notesVisibility: form.notesVisibility.value,
+          memberIds: pick('members'),
+          jurorIds: pick('jurors'),
+        },
+      });
+      location.href = `/pages/concours.html?id=${id}`;
+    } catch (err) {
+      say($('#contest-msg'), err.message);
+    }
+  });
+}
+
+async function pageContest() {
+  const id = Number(qs('id'));
+  $('#list-view').hidden = true;
+  $('#detail-view').hidden = false;
+  const view = $('#contest-view');
+  let data;
+  try {
+    data = await api(`/contests/${id}`);
+  } catch (err) {
+    view.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+    return;
+  }
+  const { contest, photos } = data;
+  $('#contest-title').textContent = contest.title;
+
+  const options = [
+    `${contest.juryCount} juré(s)`,
+    contest.autoNotation ? 'auto-notation autorisée' : 'auto-notation interdite',
+    contest.notesVisibility === 'pendant' ? 'notes visibles pendant' : 'notes visibles à la fin',
+  ];
+  view.innerHTML = `
+    <p class="muted">Statut : <span class="badge">${esc(contest.status)}</span> · ${options.join(' · ')}</p>
+    ${contest.jurors && Array.isArray(contest.jurors) ? `<p class="muted">Jurés : ${contest.jurors.map(j => esc(j.displayName)).join(', ') || '—'}</p>` : ''}
+    ${contest.members && Array.isArray(contest.members) ? `<p class="muted">Membres invités : ${contest.members.map(m => esc(m.displayName)).join(', ') || '—'}</p>` : ''}
+    <div id="contest-actions"></div>`;
+
+  if (can(ME, 'contest:manage') && contest.status !== 'clos') {
+    const next = contest.status === 'brouillon' ? 'ouvert' : 'clos';
+    const label = next === 'ouvert' ? 'Ouvrir le concours' : 'Clôturer le concours';
+    $('#contest-actions').innerHTML = `<button id="advance">${label}</button> <span id="advance-msg" class="muted"></span>`;
+    $('#advance').addEventListener('click', async () => {
+      try {
+        await api(`/contests/${id}`, { method: 'PATCH', body: { status: next } });
+        location.reload();
+      } catch (err) {
+        say($('#advance-msg'), err.message);
+      }
+    });
+  }
+
+  renderPhotos(contest, photos);
+  if (contest.me.member && contest.status !== 'clos') await renderAddPhotos(id);
+  if (contest.notesVisible) await renderRanking(id);
+}
+
+function renderPhotos(contest, photos) {
+  const canScore = contest.me.canScore;
+  const rows = photos.map(p => {
+    const ownPhoto = p.ownerId === ME.id && !contest.autoNotation;
+    const cell = (v) => contest.notesVisible ? (v ?? '—') : 'masqué';
+    const scoreCell = canScore && !ownPhoto
+      ? `<input type="number" min="0" max="20" step="0.5" value="${p.myScore ?? ''}" data-photo="${p.id}" style="width:80px"> <button data-score="${p.id}">Noter</button>`
+      : (p.myScore ?? '—');
+    return `
+      <tr>
+        <td><div class="thumb mini" style="${p.thumbUrl ? `background-image:url('${p.thumbUrl}');background-size:cover` : ''}"></div></td>
+        <td>${esc(p.title)}<br><small class="muted">${esc(p.author)}</small></td>
+        <td>${cell(p.memberAvg)}</td>
+        <td>${cell(p.juryAvg)}</td>
+        <td>${scoreCell}</td>
+      </tr>`;
+  }).join('');
+
+  $('#contest-photos').innerHTML = photos.length
+    ? `<div style="overflow-x:auto"><table>
+         <thead><tr><th></th><th>Photo</th><th>Moyenne membres</th><th>Moyenne jury</th><th>Ma note (0–20)</th></tr></thead>
+         <tbody>${rows}</tbody></table></div>
+         <p id="score-msg" class="muted" role="status"></p>`
+    : '<p class="muted">Aucune photo inscrite pour le moment.</p>';
+
+  document.querySelectorAll('[data-score]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const photoId = Number(btn.dataset.score);
+      const value = document.querySelector(`[data-photo="${photoId}"]`).value;
+      try {
+        await api(`/contests/${contest.id}/scores`, { method: 'POST', body: { photoId, value: Number(value) } });
+        say($('#score-msg'), 'Note enregistrée.', true);
+      } catch (err) {
+        say($('#score-msg'), err.message);
+      }
+    });
+  });
+}
+
+async function renderAddPhotos(contestId) {
+  const { photos } = await api('/photos/mine');
+  const box = $('#add-photos');
+  box.hidden = false;
+  if (!photos.length) {
+    $('#add-list').innerHTML = '<p class="muted">Vous n’avez pas encore de photo. Déposez-en dans une galerie.</p>';
+    return;
+  }
+  $('#add-list').innerHTML = photos.map(p => `
+    <label class="check"><input type="checkbox" value="${p.id}"> ${esc(p.title)} <span class="muted">(${esc(p.galleryTitle)})</span></label>`).join('');
+  $('#add-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const photoIds = [...$('#add-list').querySelectorAll('input:checked')].map(i => Number(i.value));
+    try {
+      await api(`/contests/${contestId}/photos`, { method: 'POST', body: { photoIds } });
+      say($('#add-msg'), 'Photos inscrites.', true);
+      setTimeout(() => location.reload(), 800);
+    } catch (err) {
+      say($('#add-msg'), err.message);
+    }
+  });
+}
+
+async function renderRanking(contestId) {
+  const ranking = await api(`/contests/${contestId}/ranking`).catch(() => null);
+  if (!ranking) return;
+  const table = (rows) => rows.length
+    ? `<table><thead><tr><th>Rang</th><th>Photo</th><th>Moyenne</th></tr></thead><tbody>${
+        rows.map(r => `<tr><td>${r.rank}</td><td>${esc(r.title)} <small class="muted">${esc(r.author)}</small></td><td>${r.average ?? '—'}</td></tr>`).join('')
+      }</tbody></table>`
+    : '<p class="muted">Aucun résultat.</p>';
+  $('#ranking').innerHTML = `
+    <div class="card"><h2>Classement par les membres</h2>${table(ranking.byMembers)}</div>
+    <div class="card"><h2>Classement par le jury</h2>${table(ranking.byJury)}</div>`;
+}
+
+// ---------- Administration ----------
+function adminTabs() {
+  const allowed = Object.entries(PERMISSIONS_ADMIN_TABS).filter(([, code]) => can(ME, code)).map(([tab]) => tab);
+  if (!allowed.length) {
+    $('#main').innerHTML = '<p class="muted">Accès refusé.</p>';
+    return null;
+  }
+  const bar = $('#tabs');
+  bar.innerHTML = allowed.map(t => `<button class="secondary" data-tab="${t}">${TAB_LABELS[t]}</button>`).join('');
+  bar.querySelectorAll('[data-tab]').forEach(btn => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
+  return allowed[0];
+}
+
+const TAB_LABELS = {
+  users: 'Utilisateurs', invites: 'Invitations', roles: 'Rôles et droits',
+  visibility: 'Visibilité', posts: 'Billets', settings: 'Réglages',
+};
+const TAB_LOADERS = {};
+
+function openTab(tab) {
+  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('secondary', b.dataset.tab !== tab));
+  document.querySelectorAll('[data-panel]').forEach(p => { p.hidden = p.dataset.panel !== tab; });
+  if (TAB_LOADERS[tab]) TAB_LOADERS[tab]().catch(err => {
+    const panel = document.querySelector(`[data-panel="${tab}"]`);
+    panel.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+  });
+}
+
+const roleOptions = (roles, selectedId) => roles
+  .map(r => `<option value="${r.id}"${r.id === selectedId ? ' selected' : ''}>${esc(r.label)}</option>`).join('');
+
+async function loadRoles() {
+  const { roles } = await api('/admin/roles');
+  return roles;
+}
+
+TAB_LOADERS.users = async () => {
+  const [{ users }, roles] = await Promise.all([api('/admin/users'), loadRoles()]);
+  const panel = document.querySelector('[data-panel="users"]');
+  panel.innerHTML = `
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Actif</th></tr></thead>
+      <tbody>${users.map(u => `
+        <tr>
+          <td>${esc(u.username)}</td>
+          <td>${esc(u.displayName)}</td>
+          <td><select data-role-user="${u.id}">${roleOptions(roles, u.roleId)}</select></td>
+          <td><input type="checkbox" data-active-user="${u.id}"${u.active ? ' checked' : ''}></td>
+        </tr>`).join('')}</tbody>
+    </table></div>
+    <p id="users-msg" class="muted" role="status"></p>
+    <h2>Nouvel utilisateur</h2>
+    <form id="new-user">
+      <div class="field"><label>Identifiant</label><input name="username" required></div>
+      <div class="field"><label>Nom affiché</label><input name="displayName"></div>
+      <div class="field"><label>Mot de passe (8 caractères minimum)</label><input name="password" type="password" required minlength="8"></div>
+      <div class="field"><label>Rôle</label><select name="roleId">${roleOptions(roles)}</select></div>
+      <button type="submit">Créer</button>
+    </form>`;
+
+  panel.querySelectorAll('[data-role-user]').forEach(sel => sel.addEventListener('change', async () => {
+    try {
+      await api(`/admin/users/${sel.dataset.roleUser}`, { method: 'PATCH', body: { roleId: Number(sel.value) } });
+      say($('#users-msg'), 'Rôle mis à jour.', true);
+    } catch (err) { say($('#users-msg'), err.message); }
+  }));
+  panel.querySelectorAll('[data-active-user]').forEach(box => box.addEventListener('change', async () => {
+    try {
+      await api(`/admin/users/${box.dataset.activeUser}`, { method: 'PATCH', body: { active: box.checked } });
+      say($('#users-msg'), 'Compte mis à jour.', true);
+    } catch (err) { say($('#users-msg'), err.message); }
+  }));
+  $('#new-user').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await api('/admin/users', {
+        method: 'POST',
+        body: { username: f.username.value, displayName: f.displayName.value, password: f.password.value, roleId: Number(f.roleId.value) },
+      });
+      say($('#users-msg'), 'Utilisateur créé.', true);
+      TAB_LOADERS.users();
+    } catch (err) { say($('#users-msg'), err.message); }
+  });
+};
+
+TAB_LOADERS.invites = async () => {
+  const [{ invitations }, roles] = await Promise.all([api('/admin/invitations'), loadRoles()]);
+  const panel = document.querySelector('[data-panel="invites"]');
+  panel.innerHTML = `
+    <form id="new-invite" class="inline">
+      <select name="roleId">${roleOptions(roles)}</select>
+      <button type="submit">Créer une invitation</button>
+    </form>
+    <p id="invite-msg" class="muted" role="status"></p>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Rôle</th><th>Expire le</th><th>Statut</th><th></th></tr></thead>
+      <tbody>${invitations.map(i => {
+        const status = i.usedAt ? 'utilisée' : (new Date(i.expiresAt) < new Date() ? 'expirée' : 'en attente');
+        return `<tr><td>${esc(i.role)}</td><td>${fmtDate(i.expiresAt)}</td><td>${status}</td>
+          <td>${i.usedAt ? '' : `<button class="secondary" data-del-invite="${i.id}">Supprimer</button>`}</td></tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+
+  $('#new-invite').addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      const { path } = await api('/admin/invitations', { method: 'POST', body: { roleId: Number(e.target.roleId.value) } });
+      const link = location.origin + path;
+      say($('#invite-msg'), `Lien à transmettre : ${link}`, true);
+      TAB_LOADERS.invites();
+    } catch (err) { say($('#invite-msg'), err.message); }
+  });
+  panel.querySelectorAll('[data-del-invite]').forEach(btn => btn.addEventListener('click', async () => {
+    await api(`/admin/invitations/${btn.dataset.delInvite}`, { method: 'DELETE' }).catch(() => {});
+    TAB_LOADERS.invites();
+  }));
+};
+
+TAB_LOADERS.roles = async () => {
+  const [{ roles }, { permissions }] = await Promise.all([
+    api('/admin/roles'),
+    api('/admin/permissions'),
+  ]);
+  const panel = document.querySelector('[data-panel="roles"]');
+  panel.innerHTML = `
+    <p id="roles-msg" class="muted" role="status"></p>
+    ${roles.map(r => {
+      const isAdmin = r.name === 'admin';
+      return `
+      <section class="card" data-role="${r.id}">
+        <h2>${esc(r.label)} <small class="muted">(${esc(r.name)})</small></h2>
+        <div class="field"><label>Libellé</label><input name="label" value="${esc(r.label)}"></div>
+        <div class="checks">${permissions.map(p => `
+          <label class="check"><input type="checkbox" name="perm" value="${p.code}"${r.permissions.includes(p.code) ? ' checked' : ''}${isAdmin ? ' disabled' : ''}> ${esc(p.label)}</label>`).join('')}
+        </div>
+        <p class="inline">
+          ${isAdmin ? '<span class="muted">Le rôle admin garde tous ses droits.</span>' : '<button data-save-role="' + r.id + '">Enregistrer</button> <button class="secondary" data-del-role="' + r.id + '">Supprimer</button>'}
+        </p>
+      </section>`;
+    }).join('')}
+    <h2>Nouveau rôle</h2>
+    <form id="new-role" class="inline">
+      <input name="name" placeholder="identifiant (ex. photographe)" required>
+      <input name="label" placeholder="libellé affiché" required>
+      <button type="submit">Créer</button>
+    </form>`;
+
+  panel.querySelectorAll('[data-save-role]').forEach(btn => btn.addEventListener('click', async () => {
+    const card = panel.querySelector(`[data-role="${btn.dataset.saveRole}"]`);
+    const body = {
+      label: card.querySelector('[name="label"]').value,
+      permissions: [...card.querySelectorAll('[name="perm"]:checked')].map(i => i.value),
+    };
+    try {
+      await api(`/admin/roles/${btn.dataset.saveRole}`, { method: 'PATCH', body });
+      say($('#roles-msg'), 'Rôle enregistré.', true);
+    } catch (err) { say($('#roles-msg'), err.message); }
+  }));
+  panel.querySelectorAll('[data-del-role]').forEach(btn => btn.addEventListener('click', async () => {
+    try {
+      await api(`/admin/roles/${btn.dataset.delRole}`, { method: 'DELETE' });
+      TAB_LOADERS.roles();
+    } catch (err) { say($('#roles-msg'), err.message); }
+  }));
+  $('#new-role').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target.elements;
+    try {
+      await api('/admin/roles', { method: 'POST', body: { name: f.namedItem('name').value, label: f.namedItem('label').value } });
+      TAB_LOADERS.roles();
+    } catch (err) { say($('#roles-msg'), err.message); }
+  });
+};
+
+TAB_LOADERS.visibility = async () => {
+  const [{ levels }, roles] = await Promise.all([api('/admin/visibility'), loadRoles()]);
+  const panel = document.querySelector('[data-panel="visibility"]');
+  panel.innerHTML = `
+    <p class="muted">Pour chaque niveau de visibilité, cochez les rôles qui voient les galeries concernées.</p>
+    <p id="vis-msg" class="muted" role="status"></p>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Niveau</th>${roles.map(r => `<th>${esc(r.label)}</th>`).join('')}<th></th></tr></thead>
+      <tbody>${levels.map(l => `
+        <tr data-level="${l.visibility}">
+          <td>${esc(l.visibility)}</td>
+          ${roles.map(r => `<td><input type="checkbox" name="role" value="${r.id}"${l.roleIds.includes(r.id) ? ' checked' : ''}></td>`).join('')}
+          <td><button class="secondary" data-save-level="${l.visibility}">Enregistrer</button></td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+
+  panel.querySelectorAll('[data-save-level]').forEach(btn => btn.addEventListener('click', async () => {
+    const row = panel.querySelector(`[data-level="${btn.dataset.saveLevel}"]`);
+    const roleIds = [...row.querySelectorAll('[name="role"]:checked')].map(i => Number(i.value));
+    try {
+      await api(`/admin/visibility/${btn.dataset.saveLevel}`, { method: 'PUT', body: { roleIds } });
+      say($('#vis-msg'), `Niveau « ${btn.dataset.saveLevel} » enregistré.`, true);
+    } catch (err) { say($('#vis-msg'), err.message); }
+  }));
+};
+
+TAB_LOADERS.posts = async () => {
+  const { posts } = await api('/posts/manage');
+  const panel = document.querySelector('[data-panel="posts"]');
+  const card = p => `
+    <section class="card" data-post="${p.id}">
+      <div class="field"><label>Titre</label><input name="title" value="${esc(p.title)}"></div>
+      <div class="field"><label>Texte</label><textarea name="body" rows="5">${esc(p.body)}</textarea></div>
+      <label class="check"><input type="checkbox" name="published"${p.published ? ' checked' : ''}> Publié</label>
+      <p class="inline">
+        <button data-save-post="${p.id}">Enregistrer</button>
+        <button class="secondary" data-del-post="${p.id}">Supprimer</button>
+      </p>
+    </section>`;
+  panel.innerHTML = `
+    <p id="posts-msg" class="muted" role="status"></p>
+    <h2>Nouveau billet</h2>
+    <form id="new-post" class="card">
+      <div class="field"><label>Titre</label><input name="title" required></div>
+      <div class="field"><label>Texte</label><textarea name="body" rows="5"></textarea></div>
+      <label class="check"><input type="checkbox" name="published"> Publier</label>
+      <p><button type="submit">Créer</button></p>
+    </form>
+    ${posts.map(card).join('')}`;
+
+  $('#new-post').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await api('/posts', { method: 'POST', body: { title: f.title.value, body: f.body.value, published: f.published.checked } });
+      TAB_LOADERS.posts();
+    } catch (err) { say($('#posts-msg'), err.message); }
+  });
+  panel.querySelectorAll('[data-save-post]').forEach(btn => btn.addEventListener('click', async () => {
+    const card = panel.querySelector(`[data-post="${btn.dataset.savePost}"]`);
+    try {
+      await api(`/posts/${btn.dataset.savePost}`, {
+        method: 'PATCH',
+        body: {
+          title: card.querySelector('[name="title"]').value,
+          body: card.querySelector('[name="body"]').value,
+          published: card.querySelector('[name="published"]').checked,
+        },
+      });
+      say($('#posts-msg'), 'Billet enregistré.', true);
+    } catch (err) { say($('#posts-msg'), err.message); }
+  }));
+  panel.querySelectorAll('[data-del-post]').forEach(btn => btn.addEventListener('click', async () => {
+    await api(`/posts/${btn.dataset.delPost}`, { method: 'DELETE' }).catch(() => {});
+    TAB_LOADERS.posts();
+  }));
+};
+
+TAB_LOADERS.settings = async () => {
+  const { settings } = await api('/admin/settings');
+  const panel = document.querySelector('[data-panel="settings"]');
+  const shown = settings.metadata_fields || [];
+  panel.innerHTML = `
+    <form id="settings-form">
+      <div class="field"><label>Nom du club</label><input name="club_name" value="${esc(settings.club_name || '')}" required></div>
+      <h2>Métadonnées affichées dans les galeries</h2>
+      <div class="checks">${Object.entries(METADATA_LABELS).map(([key, label]) => `
+        <label class="check"><input type="checkbox" name="field" value="${key}"${shown.includes(key) ? ' checked' : ''}> ${esc(label)}</label>`).join('')}
+      </div>
+      <p><button type="submit">Enregistrer</button> <span id="settings-msg" class="muted" role="status"></span></p>
+    </form>`;
+
+  $('#settings-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target;
+    const fields = [...f.querySelectorAll('[name="field"]:checked')].map(i => i.value);
+    try {
+      await api('/admin/settings/club_name', { method: 'PUT', body: { value: f.club_name.value.trim() } });
+      await api('/admin/settings/metadata_fields', { method: 'PUT', body: { value: fields } });
+      say($('#settings-msg'), 'Réglages enregistrés.', true);
+    } catch (err) { say($('#settings-msg'), err.message); }
+  });
+};
+
+async function pageAdmin() {
+  if (!requireLogin()) return;
+  const first = adminTabs();
+  if (first) openTab(first);
 }
 
 // ---------- Démarrage ----------
-document.addEventListener("DOMContentLoaded", async () => {
-  initLogin();
-  const user = await renderUserStatus();
-  await loadGalleries();
-  initGalleryForm(user);
+const PAGES = {
+  home: pageHome,
+  login: pageLogin,
+  register: pageRegister,
+  galleries: async () => { if (requireLogin()) await pageGalleries(); },
+  gallery: async () => { if (requireLogin()) await pageGallery(); },
+  contests: async () => {
+    if (!requireLogin()) return;
+    if (qs('id')) await pageContest();
+    else await pageContests();
+  },
+  admin: pageAdmin,
+};
 
-  const contest = document.getElementById("contest");
-  if (contest) {
-    contest.innerHTML = `<p class="muted">Les concours ne sont pas encore branchés au backend.</p>`;
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadMe();
+  renderHeader();
+  const run = PAGES[document.body.dataset.page];
+  if (!run) return;
+  try {
+    await run();
+  } catch (err) {
+    console.error(err);
+    const main = $('#main');
+    if (main) main.insertAdjacentHTML('afterbegin', `<p class="muted">${esc(err.message)}</p>`);
   }
 });

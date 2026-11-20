@@ -4,27 +4,57 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Concours · Club photo</title>
-  <link rel="stylesheet" href="../css/style.css">
+  <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
+<body data-page="contests">
   <header class="site">
-    <a class="brand" href="../index.html">Club photo</a>
-    <nav class="main">
-      <a href="../index.html">Accueil</a>
-      <a href="galeries.html">Galeries</a>
-      <a href="concours.html" aria-current="page">Concours</a>
-      <a href="admin.html">Admin</a>
-      <a href="login.html">Connexion</a>
-    </nav>
+    <a class="brand" href="/index.html">Club photo</a>
+    <nav class="main" id="nav"></nav>
     <span class="role-switch" id="user-status"></span>
   </header>
 
-  <main>
-    <h1>Concours</h1>
-    <section id="contest"></section>
+  <main id="main">
+    <div id="list-view">
+      <h1>Concours</h1>
+      <section id="contest-list"></section>
+      <section class="card" id="new-contest" hidden>
+        <h2>Nouveau concours</h2>
+        <form id="contest-form">
+          <div class="field"><label for="c-title">Titre</label><input id="c-title" name="title" required></div>
+          <div class="field"><label for="c-jury">Nombre de jurés (1 à 20)</label><input id="c-jury" name="juryCount" type="number" min="1" max="20" value="2" required></div>
+          <label class="check"><input type="checkbox" name="autoNotation"> Autoriser l’auto-notation</label>
+          <div class="field">
+            <label for="c-notes">Visibilité des notes</label>
+            <select id="c-notes" name="notesVisibility"><option value="fin">À la fin du concours</option><option value="pendant">Pendant le concours</option></select>
+          </div>
+          <h3>Membres invités</h3>
+          <div id="members-box"></div>
+          <h3>Jurés</h3>
+          <div id="jurors-box"></div>
+          <p><button type="submit">Créer le concours</button></p>
+          <p id="contest-msg" class="muted" role="status"></p>
+        </form>
+      </section>
+    </div>
+    <div id="detail-view" hidden>
+      <p><a href="/pages/concours.html">← Concours</a></p>
+      <h1 id="contest-title">Concours</h1>
+      <div id="contest-view"></div>
+      <h2>Photos</h2>
+      <section id="contest-photos"></section>
+      <section class="card" id="add-photos" hidden>
+        <h2>Inscrire mes photos</h2>
+        <form id="add-form">
+          <div id="add-list"></div>
+          <p><button type="submit">Inscrire</button> <span id="add-msg" class="muted" role="status"></span></p>
+        </form>
+      </section>
+      <h2>Classements</h2>
+      <section id="ranking" class="grid-1"></section>
+    </div>
   </main>
 
-  <footer class="site">Club photo · Front de démonstration</footer>
-  <script src="../js/app.js"></script>
+  <footer class="site">Club photo</footer>
+  <script src="/js/app.js"></script>
 </body>
 </html>

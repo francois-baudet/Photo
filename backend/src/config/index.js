@@ -14,4 +14,8 @@ module.exports = {
   databaseUrl: required('DATABASE_URL'),
   jwtSecret: required('JWT_SECRET'),
   storageDir: process.env.STORAGE_DIR || '../storage',
+  // true si le site est servi en HTTPS (cookie de session « Secure »)
+  cookieSecure: process.env.COOKIE_SECURE === 'true',
+  // Durée de validité d'une invitation, en jours
+  invitationDays: Number(process.env.INVITATION_DAYS || 7),
 };
