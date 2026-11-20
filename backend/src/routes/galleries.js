@@ -123,6 +123,7 @@ router.get('/:id', attachUser, async (req, res) => {
       previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview?v=${p.version}` : null,
       rawUrl: editable ? `/api/photos/${p.id}/raw` : null,
       canRotate: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
+      canRename: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
       canDelete: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
       metadata: photos.displayMetadata(p.data || {}, fields),
     })),

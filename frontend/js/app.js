@@ -1034,10 +1034,27 @@ function openToolsModal(p) {
   modal.innerHTML = `<div class="meta-box" role="dialog" aria-label="Outils de la photo">
       <div class="inline" style="justify-content:space-between"><strong>${esc(p.title)}</strong>
         <button class="secondary" data-act="close">Fermer</button></div>
-      <div class="tools-list">${actions.join('') || '<p class="muted">Aucune action disponible.</p>'}</div>
+      ${p.canRename ? `<form id="rename-form" class="inline" style="margin-top:12px">
+        <input name="title" value="${esc(p.title)}" maxlength="120" required aria-label="Nouveau titre">
+        <button type="submit">Renommer</button>
+      </form>` : ''}
+      <div class="tools-list">${actions.join('') || (p.canRename ? '' : '<p class="muted">Aucune action disponible.</p>')}</div>
       <p id="tools-msg" class="muted" role="status"></p>
     </div>`;
   document.body.appendChild(modal);
+
+  const renameForm = modal.querySelector('#rename-form');
+  if (renameForm) {
+    renameForm.addEventListener('submit', async e => {
+      e.preventDefault();
+      try {
+        await api(`/photos/${p.id}`, { method: 'PATCH', body: { title: field(renameForm, 'title').value.trim() } });
+        location.reload();
+      } catch (err) {
+        say($('#tools-msg'), err.message);
+      }
+    });
+  }
 
   const close = () => modal.remove();
   modal.addEventListener('click', async e => {
