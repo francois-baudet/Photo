@@ -503,7 +503,15 @@ async function pageContest() {
   await renderContestEditor(contest, id);
   await renderContestActions(contest, id);
   renderPhotos(contest, photos);
-  if (contest.notesVisible) await renderRanking(id);
+  // Moyennes et classements : seulement quand les notes sont visibles (réglage du concours)
+  if (contest.notesVisible) {
+    $('#ranking-block').hidden = false;
+    await renderRanking(id);
+  } else {
+    $('#ranking-block').hidden = true;
+    view.insertAdjacentHTML('beforeend',
+      '<p class="muted">Les moyennes et les classements seront publiés à la clôture du concours.</p>');
+  }
 }
 
 // Formulaire de modification d'un concours (gestionnaire des concours).
@@ -645,7 +653,6 @@ function drawPhotoTable(contest, photos) {
   // Une note par personne et par photo : une fois notée, la note reste affichée sans modification possible
   const rows = list.map((p, i) => {
     const ownPhoto = p.ownerId === ME.id && !contest.autoNotation;
-    const cell = (v) => contest.notesVisible ? (v ?? '—') : 'masqué';
     const hasScore = hasMyScore(p);
     let scoreCell = hasScore ? p.myScore : '—';
     if (canScore && !ownPhoto) {
@@ -658,15 +665,15 @@ function drawPhotoTable(contest, photos) {
       <tr>
         <td>${thumb}</td>
         <td>${esc(p.title)}<br><small class="muted">${esc(p.author)}</small></td>
-        <td>${cell(p.memberAvg)}</td>
-        <td>${cell(p.juryAvg)}</td>
+        ${contest.notesVisible ? `<td>${p.memberAvg ?? '—'}</td><td>${p.juryAvg ?? '—'}</td>` : ''}
         <td>${scoreCell}</td>
       </tr>`;
   }).join('');
 
+  // Les colonnes de moyennes n'existent que lorsque les notes sont visibles
   $('#photo-table').innerHTML = list.length
     ? `<div style="overflow-x:auto"><table>
-         <thead><tr><th></th><th>Photo</th><th>Moyenne membres</th><th>Moyenne jury</th><th>Ma note (0–20)</th></tr></thead>
+         <thead><tr><th></th><th>Photo</th>${contest.notesVisible ? '<th>Moyenne membres</th><th>Moyenne jury</th>' : ''}<th>Ma note (0–20)</th></tr></thead>
          <tbody>${rows}</tbody></table></div>`
     : '<p class="muted">Aucune photo ne correspond à ce filtre.</p>';
 }
