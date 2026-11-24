@@ -4,6 +4,10 @@
 
 const API = '/api';
 const VISIBILITIES = ['public', 'membres', 'concours', 'jury', 'admin'];
+const UPLOAD_ACCESS_LABELS = {
+  proprietaire: 'Propriétaire et gestionnaires seulement',
+  membres: 'Tous les membres autorisés à déposer',
+};
 const METADATA_LABELS = {
   camera: 'Boîtier', lens: 'Objectif', iso: 'ISO', aperture: 'Ouverture',
   shutter: 'Vitesse', focal_length: 'Focale', date: 'Date',
@@ -258,12 +262,18 @@ async function pageGalleries() {
   const form = $('#gallery-form');
   $('#btn-new-gallery').hidden = false;
   $('#g-visibility').innerHTML = VISIBILITIES.map(v => `<option value="${v}">${v}</option>`).join('');
+  $('#g-upload').innerHTML = Object.entries(UPLOAD_ACCESS_LABELS)
+    .map(([v, label]) => `<option value="${v}">${esc(label)}</option>`).join('');
   form.addEventListener('submit', async e => {
     e.preventDefault();
     try {
       await api('/galleries', {
         method: 'POST',
-        body: { title: field(form, 'title').value, visibility: field(form, 'visibility').value },
+        body: {
+          title: field(form, 'title').value,
+          visibility: field(form, 'visibility').value,
+          uploadAccess: field(form, 'uploadAccess').value,
+        },
       });
       form.reset();
       say($('#gallery-msg'), 'Galerie créée.', true);
@@ -333,16 +343,25 @@ async function pageGallery() {
     const edit = $('#visibility-form');
     field(edit, 'visibility').innerHTML = VISIBILITIES
       .map(v => `<option value="${v}"${v === gallery.visibility ? ' selected' : ''}>${v}</option>`).join('');
+    // Le dépôt se règle sur les galeries classiques ; une galerie de concours suit les règles du concours
+    const uploadField = field(edit, 'uploadAccess');
+    uploadField.closest('.field').hidden = gallery.kind !== 'classique';
+    uploadField.innerHTML = Object.entries(UPLOAD_ACCESS_LABELS)
+      .map(([v, label]) => `<option value="${v}"${v === gallery.uploadAccess ? ' selected' : ''}>${esc(label)}</option>`).join('');
     edit.addEventListener('submit', async e => {
       e.preventDefault();
+      const body = { visibility: field(edit, 'visibility').value };
+      if (gallery.kind === 'classique') body.uploadAccess = uploadField.value;
       try {
-        await api(`/galleries/${id}`, { method: 'PATCH', body: { visibility: field(edit, 'visibility').value } });
-        say($('#visibility-msg'), 'Visibilité enregistrée.', true);
+        await api(`/galleries/${id}`, { method: 'PATCH', body });
+        say($('#visibility-msg'), 'Réglages enregistrés.', true);
       } catch (err) {
         say($('#visibility-msg'), err.message);
       }
     });
   }
+
+  if (gallery.canDownload && photos.length) setupDownload(id, photos);
 
   if (gallery.contestId) {
     view.insertAdjacentHTML('afterbegin',
@@ -369,6 +388,24 @@ async function pageGallery() {
       }
     });
   }
+}
+
+// ---------- Téléchargement : liste cochable des fichiers RAW, archive ZIP ----------
+function setupDownload(galleryId, photos) {
+  $('#btn-download').hidden = false;
+  const list = $('#download-list');
+  list.innerHTML = photos.map(p => `
+    <label class="check"><input type="checkbox" name="dl" value="${p.id}"> ${esc(p.title || '(sans titre)')}${p.rawExt ? ` <span class="muted">${esc(p.rawExt)}</span>` : ''}</label>`).join('');
+  const boxes = () => [...list.querySelectorAll('input[name="dl"]')];
+  $('#dl-all').addEventListener('click', () => boxes().forEach(b => { b.checked = true; }));
+  $('#dl-none').addEventListener('click', () => boxes().forEach(b => { b.checked = false; }));
+  $('#dl-go').addEventListener('click', () => {
+    const ids = boxes().filter(b => b.checked).map(b => b.value);
+    if (!ids.length) return say($('#download-msg'), 'Aucun fichier sélectionné.');
+    // Le serveur contrôle la permission et la visibilité ; la réponse est une pièce jointe ZIP
+    location.href = `${API}/galleries/${galleryId}/download?ids=${ids.join(',')}`;
+    say($('#download-msg'), `Téléchargement de ${ids.length} fichier(s) lancé.`, true);
+  });
 }
 
 // ---------- Concours ----------
@@ -527,13 +564,89 @@ async function renderContestEditor(contest, id) {
   });
 }
 
+// Filtre et tri de la liste des photos selon MES notes. Choix conservés pendant la session de page.
+let PHOTO_FILTER = 'toutes'; // toutes | notees | non_notees
+let PHOTO_SORT = 'ordre';    // ordre | desc | asc  (photos non notées toujours en fin de liste)
+
+function hasMyScore(p) {
+  return p.myScore !== null && p.myScore !== undefined;
+}
+
+function filterAndSortPhotos(photos) {
+  let list = photos.filter(p => {
+    if (PHOTO_FILTER === 'notees') return hasMyScore(p);
+    if (PHOTO_FILTER === 'non_notees') return !hasMyScore(p);
+    return true;
+  });
+  if (PHOTO_SORT !== 'ordre') {
+    const dir = PHOTO_SORT === 'desc' ? -1 : 1;
+    list = list.slice().sort((a, b) => {
+      if (!hasMyScore(a) || !hasMyScore(b)) return hasMyScore(a) === hasMyScore(b) ? 0 : (hasMyScore(a) ? -1 : 1);
+      return dir * (a.myScore - b.myScore);
+    });
+  }
+  return list;
+}
+
 function renderPhotos(contest, photos) {
+  // Filtre et tri utiles à qui note (membre ou juré)
+  const canFilter = (contest.me.member || contest.me.juror) && photos.length > 0;
+  $('#contest-photos').innerHTML = photos.length
+    ? `${canFilter ? `
+         <div class="inline photo-tools">
+           <label>Afficher <select id="photo-filter">
+             <option value="toutes">toutes les photos</option>
+             <option value="notees">notées par moi</option>
+             <option value="non_notees">non notées par moi</option>
+           </select></label>
+           <label>Trier par <select id="photo-sort">
+             <option value="ordre">ordre d’inscription</option>
+             <option value="desc">ma note, décroissante</option>
+             <option value="asc">ma note, croissante</option>
+           </select></label>
+         </div>` : ''}
+       <div id="photo-table"></div>
+       <p id="score-msg" class="muted" role="status"></p>`
+    : '<p class="muted">Aucune photo inscrite pour le moment.</p>';
+  if (!photos.length) return;
+
+  if (canFilter) {
+    $('#photo-filter').value = PHOTO_FILTER;
+    $('#photo-sort').value = PHOTO_SORT;
+    $('#photo-filter').addEventListener('change', e => { PHOTO_FILTER = e.target.value; drawPhotoTable(contest, photos); });
+    $('#photo-sort').addEventListener('change', e => { PHOTO_SORT = e.target.value; drawPhotoTable(contest, photos); });
+  }
+
+  // Délégation : le tableau est redessiné à chaque filtre ou tri
+  $('#photo-table').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-score]');
+    if (!btn) return;
+    const photoId = Number(btn.dataset.score);
+    const value = $(`#photo-table [data-photo="${photoId}"]`).value;
+    try {
+      await api(`/contests/${contest.id}/scores`, { method: 'POST', body: { photoId, value: Number(value) } });
+      say($('#score-msg'), 'Note enregistrée.', true);
+      // Moyennes et classements recalculés après chaque vote
+      await pageContest();
+    } catch (err) {
+      say($('#score-msg'), err.message);
+    }
+  });
+
+  drawPhotoTable(contest, photos);
+}
+
+function drawPhotoTable(contest, photos) {
   const canScore = contest.me.canScore;
+  const list = filterAndSortPhotos(photos);
+  // Les vignettes ouvrent la visionneuse dans l'ordre affiché
+  registerLightbox(list);
+
   // Une note par personne et par photo : une fois notée, la note reste affichée sans modification possible
-  const rows = photos.map((p, i) => {
+  const rows = list.map((p, i) => {
     const ownPhoto = p.ownerId === ME.id && !contest.autoNotation;
     const cell = (v) => contest.notesVisible ? (v ?? '—') : 'masqué';
-    const hasScore = p.myScore !== null && p.myScore !== undefined;
+    const hasScore = hasMyScore(p);
     let scoreCell = hasScore ? p.myScore : '—';
     if (canScore && !ownPhoto) {
       scoreCell = `<input type="number" min="0" max="20" step="0.5" value="${hasScore ? p.myScore : ''}" data-photo="${p.id}" style="width:80px"> <button data-score="${p.id}">${hasScore ? 'Modifier' : 'Noter'}</button>`;
@@ -551,29 +664,11 @@ function renderPhotos(contest, photos) {
       </tr>`;
   }).join('');
 
-  $('#contest-photos').innerHTML = photos.length
+  $('#photo-table').innerHTML = list.length
     ? `<div style="overflow-x:auto"><table>
          <thead><tr><th></th><th>Photo</th><th>Moyenne membres</th><th>Moyenne jury</th><th>Ma note (0–20)</th></tr></thead>
-         <tbody>${rows}</tbody></table></div>
-         <p id="score-msg" class="muted" role="status"></p>`
-    : '<p class="muted">Aucune photo inscrite pour le moment.</p>';
-
-  registerLightbox(photos);
-
-  document.querySelectorAll('[data-score]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const photoId = Number(btn.dataset.score);
-      const value = document.querySelector(`[data-photo="${photoId}"]`).value;
-      try {
-        await api(`/contests/${contest.id}/scores`, { method: 'POST', body: { photoId, value: Number(value) } });
-        say($('#score-msg'), 'Note enregistrée.', true);
-        // Moyennes et classements recalculés après chaque vote
-        await pageContest();
-      } catch (err) {
-        say($('#score-msg'), err.message);
-      }
-    });
-  });
+         <tbody>${rows}</tbody></table></div>`
+    : '<p class="muted">Aucune photo ne correspond à ce filtre.</p>';
 }
 
 async function renderRanking(contestId) {

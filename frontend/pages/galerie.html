@@ -19,10 +19,24 @@
     <div id="gallery-view">
       <p class="inline">
         <button class="toggle" id="btn-upload" data-toggle="upload-section" hidden>+ Déposer des photos</button>
-        <button class="toggle secondary" id="btn-visibility" data-toggle="visibility-section" hidden>Modifier la visibilité</button>
+        <button class="toggle secondary" id="btn-download" data-toggle="download-section" hidden>Télécharger des fichiers</button>
+        <button class="toggle secondary" id="btn-visibility" data-toggle="visibility-section" hidden>Réglages de la galerie</button>
         <button class="secondary" id="btn-delete-gallery" hidden>Supprimer la galerie</button>
       </p>
       <section id="photo-grid" class="grid"></section>
+      <section class="card" id="download-section" hidden>
+        <h2>Télécharger des fichiers</h2>
+        <p class="muted">Cochez les fichiers RAW à télécharger. Ils sont livrés dans une archive ZIP.</p>
+        <p class="inline">
+          <button type="button" class="secondary" id="dl-all">Tout sélectionner</button>
+          <button type="button" class="secondary" id="dl-none">Tout désélectionner</button>
+        </p>
+        <div id="download-list" class="checks"></div>
+        <p class="inline">
+          <button type="button" id="dl-go">Télécharger la sélection</button>
+          <span id="download-msg" class="muted" role="status"></span>
+        </p>
+      </section>
       <section class="card" id="upload-section" hidden>
         <h2>Déposer des photos</h2>
         <p class="muted">RAW (NEF, CR2, CR3, ARW, RAF, DNG…) ou JPEG. 50 fichiers maximum, 200 Mo chacun.</p>
@@ -33,9 +47,10 @@
         </form>
       </section>
       <section class="card" id="visibility-section" hidden>
-        <h2>Visibilité</h2>
+        <h2>Réglages de la galerie</h2>
         <form id="visibility-form">
-          <select name="visibility"></select>
+          <div class="field"><label for="s-visibility">Visibilité</label><select id="s-visibility" name="visibility"></select></div>
+          <div class="field"><label for="s-upload">Qui peut déposer des photos</label><select id="s-upload" name="uploadAccess"></select></div>
           <button type="submit">Enregistrer</button>
           <p id="visibility-msg" class="muted" role="status"></p>
         </form>

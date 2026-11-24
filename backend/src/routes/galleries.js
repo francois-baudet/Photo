@@ -1,6 +1,7 @@
 // Galeries et dépôt de photos
 const crypto = require('crypto');
 const path = require('path');
+const archiver = require('archiver');
 const multer = require('multer');
 const router = require('express').Router();
 const { query } = require('../db/pool');
@@ -8,8 +9,11 @@ const { attachUser, requireAuth, requirePermission, hasPermission } = require('.
 const photos = require('../services/photos');
 
 const VISIBILITIES = ['public', 'membres', 'concours', 'jury', 'admin'];
+// Qui peut déposer des photos dans une galerie classique (voir migration 009)
+const UPLOAD_ACCESS = ['proprietaire', 'membres'];
 const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200 Mo par fichier RAW
 const MAX_FILES = 50;
+const MAX_DOWNLOAD = 200; // fichiers par archive
 
 // Vérifie qu'un rôle (par son nom) voit un niveau de visibilité
 async function roleSees(visibility, roleName) {
@@ -38,11 +42,18 @@ async function loadGallery(id) {
   return rows[0] || null;
 }
 
-// Dépôt : propriétaire ou gestionnaire ; et, pour une galerie de concours, les membres invités
+// Dépôt : propriétaire ou gestionnaire ; pour une galerie classique ouverte aux membres, tout
+// utilisateur qui la voit et a le droit de dépôt ; pour une galerie de concours, les membres invités
 // tant que le concours n'est pas clos.
 async function canUploadTo(gallery, user) {
   if (canEdit(gallery, user)) return true;
-  if (gallery.kind !== 'concours' || user.id === null) return false;
+  if (user.id === null) return false;
+  if (gallery.kind === 'classique') {
+    return gallery.upload_access === 'membres'
+      && hasPermission(user, 'photo:upload')
+      && await canView(gallery, user);
+  }
+  if (gallery.kind !== 'concours') return false;
   const { rows } = await query(
     `SELECT c.status,
             EXISTS (SELECT 1 FROM contest_members m WHERE m.contest_id = c.id AND m.user_id = $2) AS member
@@ -70,19 +81,22 @@ router.get('/', attachUser, async (req, res) => {
   res.json({ galleries: rows });
 });
 
-// POST /api/galleries  { title, visibility }
+// POST /api/galleries  { title, visibility, uploadAccess? }
 router.post('/', requireAuth, requirePermission('gallery:create'), async (req, res) => {
-  const { title, visibility } = req.body || {};
+  const { title, visibility, uploadAccess = 'proprietaire' } = req.body || {};
   if (typeof title !== 'string' || !title.trim() || title.trim().length > 120) {
     return res.status(400).json({ error: 'titre_invalide' });
   }
   if (!VISIBILITIES.includes(visibility)) {
     return res.status(400).json({ error: 'visibilite_invalide' });
   }
+  if (!UPLOAD_ACCESS.includes(uploadAccess)) {
+    return res.status(400).json({ error: 'depot_invalide' });
+  }
   const { rows } = await query(
-    `INSERT INTO galleries (title, owner_id, visibility) VALUES ($1, $2, $3)
-     RETURNING id, title, visibility`,
-    [title.trim(), req.user.id, visibility]
+    `INSERT INTO galleries (title, owner_id, visibility, upload_access) VALUES ($1, $2, $3, $4)
+     RETURNING id, title, visibility, upload_access AS "uploadAccess"`,
+    [title.trim(), req.user.id, visibility, uploadAccess]
   );
   res.status(201).json({ gallery: rows[0] });
 });
@@ -96,7 +110,8 @@ router.get('/:id', attachUser, async (req, res) => {
 
   const fields = await photos.visibleFields();
   const { rows } = await query(
-    `SELECT p.id, p.title, p.owner_id, p.version, p.preview_path IS NOT NULL AS "hasPreview", m.data
+    `SELECT p.id, p.title, p.owner_id, p.version, p.preview_path IS NOT NULL AS "hasPreview", m.data,
+            substring(p.raw_path from '[.][^.]*$') AS "rawExt"
        FROM photos p LEFT JOIN photo_metadata m ON m.photo_id = p.id
       WHERE p.gallery_id = $1
       ORDER BY p.created_at`,
@@ -111,14 +126,17 @@ router.get('/:id', attachUser, async (req, res) => {
       id: gallery.id,
       title: gallery.title,
       visibility: gallery.visibility,
+      uploadAccess: gallery.upload_access,
       kind: gallery.kind,
       contestId: contest[0] && gallery.kind === 'concours' ? contest[0].id : null,
       canEdit: editable,
       canUpload: uploadable && hasPermission(req.user, 'photo:upload'),
+      canDownload: req.user.id !== null && hasPermission(req.user, 'photo:download'),
     },
     photos: rows.map(p => ({
       id: p.id,
       title: p.title,
+      rawExt: p.rawExt || '',
       thumbUrl: p.hasPreview ? `/api/photos/${p.id}/thumb?v=${p.version}` : null,
       previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview?v=${p.version}` : null,
       rawUrl: editable ? `/api/photos/${p.id}/raw` : null,
@@ -130,22 +148,27 @@ router.get('/:id', attachUser, async (req, res) => {
   });
 });
 
-// PATCH /api/galleries/:id  { title?, visibility? }
+// PATCH /api/galleries/:id  { title?, visibility?, uploadAccess? }
 router.patch('/:id', requireAuth, async (req, res) => {
   const gallery = await loadGallery(Number(req.params.id));
   if (!gallery) return res.status(404).json({ error: 'introuvable' });
   if (!canEdit(gallery, req.user)) return res.status(403).json({ error: 'acces_refuse' });
 
-  const { title, visibility } = req.body || {};
+  const { title, visibility, uploadAccess } = req.body || {};
   if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.trim().length > 120)) {
     return res.status(400).json({ error: 'titre_invalide' });
   }
   if (visibility !== undefined && !VISIBILITIES.includes(visibility)) {
     return res.status(400).json({ error: 'visibilite_invalide' });
   }
+  if (uploadAccess !== undefined && !UPLOAD_ACCESS.includes(uploadAccess)) {
+    return res.status(400).json({ error: 'depot_invalide' });
+  }
   await query(
-    'UPDATE galleries SET title = COALESCE($1, title), visibility = COALESCE($2, visibility) WHERE id = $3',
-    [title ? title.trim() : null, visibility || null, gallery.id]
+    `UPDATE galleries SET title = COALESCE($1, title), visibility = COALESCE($2, visibility),
+            upload_access = COALESCE($3, upload_access)
+      WHERE id = $4`,
+    [title ? title.trim() : null, visibility || null, uploadAccess || null, gallery.id]
   );
   res.json({ ok: true });
 });
@@ -164,6 +187,50 @@ router.delete('/:id', requireAuth, async (req, res) => {
   await query('DELETE FROM galleries WHERE id = $1', [gallery.id]);
   await photos.deleteFiles(files.flatMap(f => [f.raw_path, f.preview_path, f.thumb_path]));
   res.json({ ok: true });
+});
+
+// ---------- Téléchargement des fichiers RAW ----------
+// GET /api/galleries/:id/download?ids=1,2,3 : archive ZIP des fichiers sélectionnés.
+// Réservé aux utilisateurs ayant la permission photo:download (membres et administrateurs par défaut).
+const safeName = s => String(s).replace(/[\\/:*?"<>|\x00-\x1f]/g, '').trim() || 'fichier';
+
+router.get('/:id/download', requireAuth, requirePermission('photo:download'), async (req, res) => {
+  const gallery = await loadGallery(Number(req.params.id));
+  if (!gallery || !(await canView(gallery, req.user))) return res.status(404).json({ error: 'introuvable' });
+
+  const ids = String(req.query.ids || '').split(',').filter(Boolean).map(Number);
+  if (!ids.length || ids.length > MAX_DOWNLOAD || !ids.every(Number.isInteger)) {
+    return res.status(400).json({ error: 'selection_invalide' });
+  }
+  const { rows } = await query(
+    `SELECT id, title, raw_path FROM photos
+      WHERE gallery_id = $1 AND id = ANY($2::int[])
+      ORDER BY id`,
+    [gallery.id, ids]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'introuvable' });
+
+  res.set('Cache-Control', 'private, no-store');
+  res.attachment(`${safeName(gallery.title)}.zip`);
+  const archive = archiver('zip', { store: true }); // les RAW sont déjà compressés
+  archive.on('warning', err => console.error(err));
+  archive.on('error', err => {
+    console.error(err);
+    res.destroy(err);
+  });
+  archive.pipe(res);
+
+  // Noms dans l'archive : titre de la photo + extension du fichier, sans doublon
+  const used = new Set();
+  for (const p of rows) {
+    const ext = path.extname(p.raw_path);
+    const base = safeName(p.title || `photo-${p.id}`);
+    let name = `${base}${ext}`;
+    for (let n = 2; used.has(name.toLowerCase()); n++) name = `${base} (${n})${ext}`;
+    used.add(name.toLowerCase());
+    archive.file(photos.absolutePath(p.raw_path), { name });
+  }
+  archive.finalize();
 });
 
 // ---------- Dépôt de photos ----------
