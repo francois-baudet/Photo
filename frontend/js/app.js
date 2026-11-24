@@ -463,7 +463,7 @@ async function pageGallery() {
             <div class="thumb" style="${p.thumbUrl ? `background-image:url('${p.thumbUrl}');background-size:cover;background-position:center` : ''}"></div>
           </button>
           <figcaption class="info">
-            ${esc(p.title)}
+            <span class="info-title" title="${esc(p.title)}">${esc(p.title)}</span>
             ${p.canRotate || p.canDelete || p.rawUrl ? `<button class="tool-btn" data-tools="${i}" title="Outils de la photo" aria-label="Outils de la photo">🔧</button>` : ''}
           </figcaption>
         </figure>`).join('')
