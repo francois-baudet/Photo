@@ -253,3 +253,61 @@ td .thumb-btn { width: auto; }
 .tool-btn:hover { border-color: var(--accent); }
 .tools-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .tools-list button, .tools-list a { text-align: left; }
+
+/* ---- Page d'accueil : grille de modules ----
+   Chaque module (.hm) reçoit ses positions en variables : --x, --y, --w, --h (en cases), --order (mobile). */
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 12), minmax(0, 1fr));
+  grid-auto-rows: var(--row-h, 80px);
+  gap: 12px;
+  margin-bottom: var(--gutter);
+}
+.hm {
+  grid-column: calc(var(--x) + 1) / span var(--w);
+  grid-row: calc(var(--y) + 1) / span var(--h);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gutter);
+}
+.hm-title { font-size: 1.05rem; margin: 0 0 8px; }
+.hm-post + .hm-post { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+.hm-post h3 { margin: 0 0 4px; font-size: 1rem; }
+
+/* Aperçu dans l'administration : boîtes légères, sans contenu */
+.hm-preview { background: transparent; border-style: dashed; justify-content: center; font-size: 0.85rem; }
+.hm-preview strong { display: block; }
+
+/* Carrousel */
+.carousel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.car-stage { position: relative; flex: 1; min-height: 180px; border-radius: 6px; overflow: hidden; background: var(--border); }
+.car-slide { position: absolute; inset: 0; margin: 0; opacity: 0; transition: opacity 0.4s; pointer-events: none; }
+.car-slide.is-active { opacity: 1; pointer-events: auto; }
+.car-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.car-slide figcaption {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 0.85rem;
+}
+.car-slide figcaption span { opacity: 0.8; }
+.car-nav { justify-content: space-between; margin: 8px 0 0; }
+
+/* Calendrier du mois */
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; text-align: center; font-size: 0.85rem; margin-bottom: 10px; }
+.cal-weekday { color: var(--muted); font-weight: 600; }
+.cal-cell { padding: 4px 0; border-radius: 4px; }
+.cal-today { outline: 2px solid var(--text); outline-offset: -2px; }
+.cal-event { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.cal-list { margin: 0; padding-left: 18px; font-size: 0.9rem; }
+.cal-list li + li { margin-top: 4px; }
+
+/* Mobile : les modules s'empilent, dans l'ordre de la grille */
+@media (max-width: 700px) {
+  .home-grid { grid-template-columns: 1fr; grid-auto-rows: auto; }
+  .hm { grid-column: 1 / -1; grid-row: auto; order: var(--order); min-height: 180px; }
+  .car-stage { min-height: 220px; }
+}

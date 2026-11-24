@@ -14,10 +14,27 @@ const METADATA_LABELS = {
 };
 const PERMISSIONS_ADMIN_TABS = {
   users: 'user:manage', invites: 'invite:create', roles: 'role:manage',
-  visibility: 'role:manage', posts: 'post:manage', settings: 'settings:manage',
+  visibility: 'role:manage', posts: 'post:manage', home: 'settings:manage', settings: 'settings:manage',
 };
 const ERRORS = {
   titre_invalide: 'Titre invalide.',
+  hors_grille: 'Un module dépasse de la grille.',
+  chevauchement: 'Ce module chevauche un autre module activé.',
+  grille_trop_etroite: 'Des modules ne tiendraient plus dans la grille. Déplacez-les d’abord.',
+  colonnes_invalides: 'Nombre de colonnes invalide (1 à 24).',
+  hauteur_invalide: 'Hauteur de case invalide (40 à 200 px).',
+  position_invalide: 'Position invalide.',
+  taille_invalide: 'Taille invalide.',
+  activation_invalide: 'Activation invalide.',
+  type_inconnu: 'Type de module inconnu.',
+  titre_module_invalide: 'Titre du module invalide (80 caractères maximum).',
+  nombre_invalide: 'Nombre invalide.',
+  intervalle_invalide: 'Intervalle invalide (3 à 60 secondes).',
+  billet_invalide: 'Billet invalide.',
+  contenu_invalide: 'Texte invalide (5000 caractères maximum).',
+  date_invalide: 'Date de début invalide.',
+  fin_invalide: 'Date de fin invalide (après le début).',
+  lieu_invalide: 'Lieu invalide (120 caractères maximum).',
   visibilite_invalide: 'Visibilité invalide.',
   identifiants_invalides: 'Identifiant ou mot de passe incorrect.',
   identifiant_ou_mot_de_passe_manquant: 'Renseignez l’identifiant et le mot de passe.',
@@ -171,21 +188,119 @@ function requireLogin() {
   return false;
 }
 
-// ---------- Accueil ----------
+// ---------- Accueil : grille de modules ----------
+const MODULE_LABELS = {
+  calendrier: 'Calendrier', carrousel: 'Carrousel de photos', billet: 'Billet',
+  billets: 'Liste de billets', texte: 'Texte libre',
+};
+const fmtDateTime = d => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
+
+// Position d'un module dans la grille : variables lues par le CSS (.hm)
+const placeStyle = m => `--x:${m.x};--y:${m.y};--w:${m.w};--h:${m.h};--order:${m.y * 100 + m.x}`;
+
 async function pageHome() {
   const site = await api('/site').catch(() => ({ clubName: 'Club photo' }));
   document.title = site.clubName;
   $('#club-name').textContent = site.clubName;
 
-  const { posts } = await api('/posts').catch(() => ({ posts: [] }));
-  $('#posts').innerHTML = posts.length
-    ? posts.map(p => `
-        <article class="card">
-          <h3>${esc(p.title)}</h3>
-          <div style="white-space:pre-line">${esc(p.body)}</div>
-          <p class="muted">${esc(p.author)}${p.publishedAt ? ' · ' + fmtDate(p.publishedAt) : ''}</p>
-        </article>`).join('')
-    : '<p class="muted">Pas encore de billet.</p>';
+  const { grid, modules } = await api('/home').catch(() => ({ grid: { columns: 12, rowHeight: 80 }, modules: [] }));
+  $('#home-grid').innerHTML = modules.length
+    ? `<div class="home-grid" style="--cols:${grid.columns};--row-h:${grid.rowHeight}px">${
+        modules.map(m => `<section class="hm" style="${placeStyle(m)}">${moduleHTML(m)}</section>`).join('')
+      }</div>`
+    : '<p class="muted">Aucun module n’est activé sur la page d’accueil.</p>';
+  setupCarousels();
+}
+
+// Contenu d'un module, selon son type (données déjà résolues par le serveur)
+function moduleHTML(m) {
+  const title = m.params.titre ? `<h2 class="hm-title">${esc(m.params.titre)}</h2>` : '';
+  const post = p => `
+    <h3>${esc(p.title)}</h3>
+    <div style="white-space:pre-line">${esc(p.body)}</div>
+    <p class="muted">${esc(p.author)}${p.publishedAt ? ' · ' + fmtDate(p.publishedAt) : ''}</p>`;
+  switch (m.type) {
+    case 'calendrier':
+      return title + calendarHTML(m.data.events || [], m.params.nombre || 5);
+    case 'carrousel':
+      return title + carouselHTML(m);
+    case 'billet':
+      return title + (m.data.post ? post(m.data.post) : '<p class="muted">Pas encore de billet.</p>');
+    case 'billets':
+      return title + ((m.data.posts || []).length
+        ? m.data.posts.map(p => `<article class="hm-post">${post(p)}</article>`).join('')
+        : '<p class="muted">Pas encore de billet.</p>');
+    case 'texte':
+      return title + `<div style="white-space:pre-line">${esc(m.params.contenu || '')}</div>`;
+    default:
+      return '';
+  }
+}
+
+// Mois courant en grille (semaine du lundi) et prochains évènements
+function calendarHTML(events, nombre) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const offset = (new Date(year, month, 1).getDay() + 6) % 7;
+  const eventDays = new Set(events
+    .map(e => new Date(e.startsAt))
+    .filter(d => d.getFullYear() === year && d.getMonth() === month)
+    .map(d => d.getDate()));
+
+  const cells = ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => `<span class="cal-weekday">${d}</span>`).join('')
+    + '<span></span>'.repeat(offset)
+    + Array.from({ length: daysInMonth }, (_, i) => {
+        const day = i + 1;
+        const classes = ['cal-cell', day === now.getDate() ? 'cal-today' : '', eventDays.has(day) ? 'cal-event' : ''];
+        return `<span class="${classes.filter(Boolean).join(' ')}">${day}</span>`;
+      }).join('');
+
+  const upcoming = events
+    .filter(e => new Date(e.endsAt || e.startsAt) >= now)
+    .slice(0, nombre);
+  const list = upcoming.length
+    ? `<ul class="cal-list">${upcoming.map(e => `<li><strong>${fmtDateTime(e.startsAt)}</strong> ${esc(e.title)}${
+        e.location ? ` <span class="muted">· ${esc(e.location)}</span>` : ''}</li>`).join('')}</ul>`
+    : '<p class="muted">Aucun évènement à venir.</p>';
+  const monthName = now.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  return `<p class="muted">${esc(monthName)}</p><div class="cal-grid">${cells}</div>${list}`;
+}
+
+function carouselHTML(m) {
+  const photos = m.data.photos || [];
+  if (!photos.length) return '<p class="muted">Aucune photo visible pour le moment.</p>';
+  return `
+    <div class="carousel" data-carousel data-interval="${m.params.intervalle || 6}">
+      <div class="car-stage">${photos.map((p, i) => `
+        <figure class="car-slide${i === 0 ? ' is-active' : ''}">
+          <img src="${p.previewUrl}" alt="${esc(p.title || '')}" loading="lazy">
+          <figcaption>${esc(p.title || '')}${p.galleryTitle ? ` <span>· ${esc(p.galleryTitle)}</span>` : ''}</figcaption>
+        </figure>`).join('')}
+      </div>
+      <p class="inline car-nav">
+        <button class="secondary" type="button" data-car="prev" aria-label="Photo précédente">‹</button>
+        <span class="muted car-count">1 / ${photos.length}</span>
+        <button class="secondary" type="button" data-car="next" aria-label="Photo suivante">›</button>
+      </p>
+    </div>`;
+}
+
+// Défilement automatique et boutons des carrousels de la page
+function setupCarousels() {
+  document.querySelectorAll('[data-carousel]').forEach(root => {
+    const slides = [...root.querySelectorAll('.car-slide')];
+    let current = 0;
+    const show = n => {
+      current = (n + slides.length) % slides.length;
+      slides.forEach((s, k) => s.classList.toggle('is-active', k === current));
+      root.querySelector('.car-count').textContent = `${current + 1} / ${slides.length}`;
+    };
+    root.querySelector('[data-car="prev"]').addEventListener('click', () => show(current - 1));
+    root.querySelector('[data-car="next"]').addEventListener('click', () => show(current + 1));
+    if (slides.length > 1) setInterval(() => show(current + 1), Number(root.dataset.interval) * 1000);
+  });
 }
 
 // ---------- Connexion et inscription ----------
@@ -707,7 +822,7 @@ function adminTabs() {
 
 const TAB_LABELS = {
   users: 'Utilisateurs', invites: 'Invitations', roles: 'Rôles et droits',
-  visibility: 'Visibilité', posts: 'Billets', settings: 'Réglages',
+  visibility: 'Visibilité', posts: 'Billets', home: 'Accueil', settings: 'Réglages',
 };
 const TAB_LOADERS = {};
 
@@ -996,6 +1111,221 @@ TAB_LOADERS.posts = async () => {
     if (!confirm('Supprimer ce billet ?')) return;
     await api(`/posts/${btn.dataset.delPost}`, { method: 'DELETE' }).catch(() => {});
     TAB_LOADERS.posts();
+  }));
+};
+
+// ---------- Accueil : administration de la grille, des modules et des évènements ----------
+const toLocalInput = iso => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+const fromLocalInput = v => (v ? new Date(v).toISOString() : null);
+
+// Champs de réglages propres à chaque type de module
+function moduleParamFields(type, p, posts) {
+  const titre = `<div class="field"><label>Titre affiché (facultatif)</label><input name="titre" maxlength="80" value="${esc(p.titre || '')}"></div>`;
+  const num = (name, label, val, min, max) => `<div class="field"><label>${label}</label><input type="number" name="${name}" value="${val}" min="${min}" max="${max}"></div>`;
+  switch (type) {
+    case 'calendrier':
+      return titre + num('nombre', 'Évènements à venir affichés', p.nombre || 5, 1, 10);
+    case 'carrousel':
+      return titre + num('nombre', 'Nombre de photos', p.nombre || 8, 1, 20)
+        + num('intervalle', 'Secondes entre deux photos', p.intervalle || 6, 3, 60);
+    case 'billets':
+      return titre + num('nombre', 'Nombre de billets affichés', p.nombre || 3, 1, 10);
+    case 'billet': {
+      const options = [...posts];
+      if (p.postId && !options.some(b => b.id === p.postId)) options.push({ id: p.postId, title: `Billet n° ${p.postId}`, published: true });
+      return titre + `<div class="field"><label>Billet affiché</label><select name="postId">
+        <option value="">Le dernier billet publié</option>
+        ${options.map(b => `<option value="${b.id}"${b.id === p.postId ? ' selected' : ''}>${esc(b.title)}${b.published ? '' : ' (brouillon)'}</option>`).join('')}
+        </select></div>`;
+    }
+    case 'texte':
+      return titre + `<div class="field"><label>Texte</label><textarea name="contenu" rows="4" maxlength="5000">${esc(p.contenu || '')}</textarea></div>`;
+    default:
+      return titre;
+  }
+}
+
+// Réglages lus dans la carte d'un module, dans la forme attendue par le serveur
+function readModuleParams(type, card) {
+  const v = name => { const el = card.querySelector(`[name="${name}"]`); return el ? el.value : undefined; };
+  const params = { titre: v('titre') };
+  if (['calendrier', 'carrousel', 'billets'].includes(type)) params.nombre = Number(v('nombre'));
+  if (type === 'carrousel') params.intervalle = Number(v('intervalle'));
+  if (type === 'billet') params.postId = v('postId') ? Number(v('postId')) : null;
+  if (type === 'texte') params.contenu = v('contenu');
+  return params;
+}
+
+// Aperçu de la grille : les modules activés, à leur place
+function gridPreviewHTML(modules, grid) {
+  const on = modules.filter(m => m.enabled);
+  if (!on.length) return '<p class="muted">Aucun module activé.</p>';
+  const rowH = Math.max(24, Math.round(grid.rowHeight / 2));
+  return `<div class="home-grid" style="--cols:${grid.columns};--row-h:${rowH}px">${on.map(m => `
+    <div class="hm hm-preview" style="${placeStyle(m)}">
+      <strong>${esc(MODULE_LABELS[m.type])}</strong>
+      <span class="muted">${esc((m.params && m.params.titre) || '')}</span>
+    </div>`).join('')}</div>`;
+}
+
+TAB_LOADERS.home = async () => {
+  const panel = document.querySelector('[data-panel="home"]');
+  const [{ grid, modules, types }, { posts }, eventsData] = await Promise.all([
+    api('/home/manage'),
+    can(ME, 'post:manage') ? api('/posts/manage') : Promise.resolve({ posts: [] }),
+    can(ME, 'post:manage') ? api('/home/events') : Promise.resolve({ events: [] }),
+  ]);
+
+  const moduleCard = m => `
+    <section class="card" data-module="${m.id}">
+      <h3>${esc(MODULE_LABELS[m.type])} <span class="badge">${m.enabled ? 'affiché' : 'masqué'}</span></h3>
+      <label class="check"><input type="checkbox" name="enabled"${m.enabled ? ' checked' : ''}> Afficher sur la page d’accueil</label>
+      <div class="checks">
+        <div class="field"><label>Colonne de départ (0 = à gauche)</label><input type="number" name="x" value="${m.x}" min="0" max="${grid.columns - 1}"></div>
+        <div class="field"><label>Ligne de départ (0 = en haut)</label><input type="number" name="y" value="${m.y}" min="0" max="59"></div>
+        <div class="field"><label>Largeur (cases)</label><input type="number" name="w" value="${m.w}" min="1" max="${grid.columns}"></div>
+        <div class="field"><label>Hauteur (cases)</label><input type="number" name="h" value="${m.h}" min="1" max="60"></div>
+      </div>
+      ${moduleParamFields(m.type, m.params || {}, posts)}
+      <p class="inline">
+        <button data-save-module="${m.id}">Enregistrer</button>
+        <button class="secondary" data-del-module="${m.id}">Supprimer</button>
+      </p>
+    </section>`;
+
+  const eventCard = e => `
+    <section class="card" data-event="${e.id}">
+      <div class="field"><label>Titre</label><input name="title" maxlength="120" value="${esc(e.title)}"></div>
+      <div class="checks">
+        <div class="field"><label>Début</label><input type="datetime-local" name="startsAt" value="${toLocalInput(e.startsAt)}"></div>
+        <div class="field"><label>Fin (facultatif)</label><input type="datetime-local" name="endsAt" value="${toLocalInput(e.endsAt)}"></div>
+        <div class="field"><label>Lieu</label><input name="location" maxlength="120" value="${esc(e.location || '')}"></div>
+      </div>
+      <p class="inline">
+        <button data-save-event="${e.id}">Enregistrer</button>
+        <button class="secondary" data-del-event="${e.id}">Supprimer</button>
+      </p>
+    </section>`;
+
+  const nextY = modules.reduce((max, m) => Math.max(max, m.y + m.h), 0);
+  panel.innerHTML = `
+    <p id="home-msg" class="muted" role="status"></p>
+
+    <section class="card">
+      <h2>Grille</h2>
+      <form id="grid-form" class="inline">
+        <div class="field"><label>Colonnes (1 à 24)</label><input type="number" name="columns" min="1" max="24" value="${grid.columns}"></div>
+        <div class="field"><label>Hauteur d’une case (px)</label><input type="number" name="rowHeight" min="40" max="200" value="${grid.rowHeight}"></div>
+        <button type="submit">Enregistrer la grille</button>
+      </form>
+      <p class="muted">Les positions et tailles des modules sont exprimées en cases. Deux modules activés ne peuvent pas se chevaucher.</p>
+    </section>
+
+    <section class="card">
+      <h2>Aperçu</h2>
+      ${gridPreviewHTML(modules, grid)}
+    </section>
+
+    <h2>Modules</h2>
+    <form id="new-module" class="inline">
+      <select name="type" aria-label="Type de module">
+        ${types.map(t => `<option value="${t}">${esc(MODULE_LABELS[t])}</option>`).join('')}
+      </select>
+      <button type="submit">+ Ajouter un module</button>
+    </form>
+    ${modules.length ? modules.map(moduleCard).join('') : '<p class="muted">Aucun module.</p>'}
+
+    ${can(ME, 'post:manage') ? `
+      <h2>Évènements du calendrier</h2>
+      <section class="card">
+        <form id="new-event">
+          <div class="field"><label>Titre</label><input name="title" maxlength="120" required></div>
+          <div class="checks">
+            <div class="field"><label>Début</label><input type="datetime-local" name="startsAt" required></div>
+            <div class="field"><label>Fin (facultatif)</label><input type="datetime-local" name="endsAt"></div>
+            <div class="field"><label>Lieu</label><input name="location" maxlength="120"></div>
+          </div>
+          <button type="submit">+ Ajouter l’évènement</button>
+        </form>
+      </section>
+      ${eventsData.events.map(eventCard).join('')}` : ''}`;
+
+  // Grille
+  panel.querySelector('#grid-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await api('/home/grid', { method: 'PUT', body: { columns: Number(field(f, 'columns').value), rowHeight: Number(field(f, 'rowHeight').value) } });
+      TAB_LOADERS.home();
+    } catch (err) { say($('#home-msg'), err.message); }
+  });
+
+  // Ajout : le nouveau module est placé sous les autres, pleine largeur
+  panel.querySelector('#new-module').addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await api('/home/modules', {
+        method: 'POST',
+        body: { type: field(e.target, 'type').value, enabled: true, x: 0, y: nextY, w: grid.columns, h: 4, params: {} },
+      });
+      TAB_LOADERS.home();
+    } catch (err) { say($('#home-msg'), err.message); }
+  });
+
+  // Modules : enregistrer et supprimer
+  panel.querySelectorAll('[data-save-module]').forEach(btn => btn.addEventListener('click', async () => {
+    const card = panel.querySelector(`[data-module="${btn.dataset.saveModule}"]`);
+    const type = modules.find(m => m.id === Number(btn.dataset.saveModule)).type;
+    const num = name => Number(card.querySelector(`[name="${name}"]`).value);
+    try {
+      await api(`/home/modules/${btn.dataset.saveModule}`, {
+        method: 'PATCH',
+        body: {
+          enabled: card.querySelector('[name="enabled"]').checked,
+          x: num('x'), y: num('y'), w: num('w'), h: num('h'),
+          params: readModuleParams(type, card),
+        },
+      });
+      say($('#home-msg'), 'Module enregistré.', true);
+      TAB_LOADERS.home();
+    } catch (err) { say($('#home-msg'), err.message); }
+  }));
+  panel.querySelectorAll('[data-del-module]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('Supprimer ce module ?')) return;
+    await api(`/home/modules/${btn.dataset.delModule}`, { method: 'DELETE' }).catch(() => {});
+    TAB_LOADERS.home();
+  }));
+
+  // Évènements (gestionnaires des billets)
+  const eventBody = form => ({
+    title: field(form, 'title').value,
+    startsAt: fromLocalInput(field(form, 'startsAt').value),
+    endsAt: fromLocalInput(field(form, 'endsAt').value),
+    location: field(form, 'location').value || null,
+  });
+  const newEvent = panel.querySelector('#new-event');
+  if (newEvent) newEvent.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await api('/home/events', { method: 'POST', body: eventBody(e.target) });
+      TAB_LOADERS.home();
+    } catch (err) { say($('#home-msg'), err.message); }
+  });
+  panel.querySelectorAll('[data-save-event]').forEach(btn => btn.addEventListener('click', async () => {
+    const card = panel.querySelector(`[data-event="${btn.dataset.saveEvent}"]`);
+    try {
+      await api(`/home/events/${btn.dataset.saveEvent}`, { method: 'PATCH', body: eventBody(card) });
+      say($('#home-msg'), 'Évènement enregistré.', true);
+    } catch (err) { say($('#home-msg'), err.message); }
+  }));
+  panel.querySelectorAll('[data-del-event]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('Supprimer cet évènement ?')) return;
+    await api(`/home/events/${btn.dataset.delEvent}`, { method: 'DELETE' }).catch(() => {});
+    TAB_LOADERS.home();
   }));
 };
 

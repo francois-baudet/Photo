@@ -7,6 +7,7 @@ router.use('/galleries', require('./galleries'));
 router.use('/photos', require('./photos'));
 router.use('/contests', require('./contests'));
 router.use('/posts', require('./posts'));
+router.use('/home', require('./home'));
 router.use('/admin', require('./admin'));
 
 // GET /api/site : réglages publics (nom du club)
