@@ -9,7 +9,8 @@ const router = require('express').Router();
 const { query } = require('../db/pool');
 const { attachUser, requireAuth, requirePermission } = require('../middlewares/auth');
 
-const TYPES = ['calendrier', 'carrousel', 'billet', 'billets', 'texte'];
+const TYPES = ['calendrier', 'carrousel', 'billet', 'billets', 'texte', 'liens', 'resultats'];
+const MAX_LINKS = 20;
 const DEFAULT_GRID = { columns: 12, rowHeight: 80 };
 const MAX_ROWS = 60;
 
@@ -30,6 +31,41 @@ async function loadModules() {
     'SELECT id, type, enabled, x, y, w, h, params FROM home_modules ORDER BY y, x, id'
   );
   return rows;
+}
+
+// Bannière : titre (vide = nom du club), sous-titre, logo affiché ou non
+async function loadHero() {
+  const { rows } = await query(
+    "SELECT key, value FROM settings WHERE key IN ('home_hero', 'club_name')"
+  );
+  const byKey = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  const hero = byKey.home_hero || {};
+  const clubName = typeof byKey.club_name === 'string' ? byKey.club_name : 'Club photo';
+  return {
+    titre: typeof hero.titre === 'string' && hero.titre.trim() ? hero.titre.trim() : clubName,
+    sousTitre: typeof hero.sousTitre === 'string' ? hero.sousTitre : 'Galeries, concours et actualités du club.',
+    logo: hero.logo !== false,
+  };
+}
+
+// Liens : une liste { titre, url, description }, adresses http(s) seulement
+function checkLinks(items) {
+  if (!Array.isArray(items) || items.length > MAX_LINKS) return { error: 'liens_invalides' };
+  const out = [];
+  for (const it of items) {
+    if (!it || typeof it !== 'object' || typeof it.titre !== 'string' || !it.titre.trim() || it.titre.length > 80) {
+      return { error: 'liens_invalides' };
+    }
+    if (typeof it.url !== 'string' || it.url.length > 300) return { error: 'lien_url_invalide' };
+    let parsed;
+    try { parsed = new URL(it.url); } catch { return { error: 'lien_url_invalide' }; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { error: 'lien_url_invalide' };
+    if (it.description !== undefined && (typeof it.description !== 'string' || it.description.length > 200)) {
+      return { error: 'liens_invalides' };
+    }
+    out.push({ titre: it.titre.trim(), url: parsed.href, description: (it.description || '').trim() });
+  }
+  return { items: out };
 }
 
 // Réglages propres à chaque type. Renvoie { params } ou { error }.
@@ -74,6 +110,23 @@ function checkParams(type, input) {
         return { error: 'contenu_invalide' };
       }
       out.contenu = p.contenu || '';
+      break;
+    }
+    case 'liens': {
+      const { items, error } = checkLinks(p.items === undefined ? [] : p.items);
+      if (error) return { error };
+      out.items = items;
+      break;
+    }
+    case 'resultats': {
+      const err = nombre(1, 10, 3); if (err) return err;
+      const classement = p.classement === undefined ? 'membres' : p.classement;
+      if (classement !== 'membres' && classement !== 'jury') return { error: 'classement_invalide' };
+      out.classement = classement;
+      if (p.concoursId !== undefined && p.concoursId !== null && !isInt(p.concoursId, 1, 2147483647)) {
+        return { error: 'concours_invalide' };
+      }
+      out.concoursId = p.concoursId ?? null; // null : le dernier concours clos
       break;
     }
   }
@@ -155,25 +208,67 @@ async function moduleData(m, user) {
     );
     return { post: rows[0] || null };
   }
+  if (m.type === 'resultats') {
+    // Classement d'un concours clos : le dernier, ou celui choisi. Les notes sont publiées à la clôture.
+    const { rows: found } = await query(
+      `SELECT id, title FROM contests
+        WHERE status = 'clos' AND ($1::int IS NULL OR id = $1)
+        ORDER BY id DESC LIMIT 1`,
+      [m.params.concoursId ?? null]
+    );
+    const contest = found[0];
+    if (!contest) return { contest: null, ranking: [] };
+    const { rows } = await query(
+      `SELECT p.id, p.title, u.display_name AS author, ROUND(AVG(s.value), 1)::float AS average
+         FROM scores s
+         JOIN photos p ON p.id = s.photo_id
+         JOIN users u ON u.id = p.owner_id
+        WHERE s.contest_id = $1 AND s.scorer_kind = $2
+        GROUP BY p.id, u.display_name
+        ORDER BY average DESC, p.id
+        LIMIT $3`,
+      [contest.id, m.params.classement === 'jury' ? 'jury' : 'membre', m.params.nombre || 3]
+    );
+    return {
+      contest: { id: contest.id, title: contest.title },
+      classement: m.params.classement,
+      ranking: rows.map((r, i) => ({ rank: i + 1, ...r })),
+    };
+  }
   return {};
 }
 
-// GET /api/home : grille et modules activés, avec leurs données (public)
+// GET /api/home : bannière, grille et modules activés, avec leurs données (public)
 router.get('/', attachUser, async (req, res) => {
+  const hero = await loadHero();
   const grid = await loadGrid();
   const modules = (await loadModules()).filter(m => m.enabled);
   const out = [];
   for (const m of modules) {
     out.push({ id: m.id, type: m.type, x: m.x, y: m.y, w: m.w, h: m.h, params: m.params, data: await moduleData(m, req.user) });
   }
-  res.json({ grid, modules: out });
+  res.json({ hero, grid, modules: out });
+});
+
+// PUT /api/home/hero  { titre, sousTitre, logo }
+router.put('/hero', requireAuth, requirePermission('settings:manage'), async (req, res) => {
+  const { titre, sousTitre, logo } = req.body || {};
+  if (typeof titre !== 'string' || titre.length > 80) return bad(res, 'titre_banniere_invalide');
+  if (typeof sousTitre !== 'string' || sousTitre.length > 200) return bad(res, 'sous_titre_invalide');
+  if (typeof logo !== 'boolean') return bad(res, 'logo_invalide');
+  await query(
+    `INSERT INTO settings (key, value) VALUES ('home_hero', $1)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [JSON.stringify({ titre: titre.trim(), sousTitre: sousTitre.trim(), logo })]
+  );
+  res.json({ ok: true });
 });
 
 // ---------- Administration (settings:manage) ----------
 
 // GET /api/home/manage : réglages bruts de tous les modules
 router.get('/manage', requireAuth, requirePermission('settings:manage'), async (req, res) => {
-  res.json({ grid: await loadGrid(), modules: await loadModules(), types: TYPES });
+  res.json({ hero: await loadHero(), grid: await loadGrid(), modules: await loadModules(), types: TYPES });
 });
 
 // PUT /api/home/grid  { columns, rowHeight }

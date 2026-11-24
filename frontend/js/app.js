@@ -35,6 +35,13 @@ const ERRORS = {
   date_invalide: 'Date de début invalide.',
   fin_invalide: 'Date de fin invalide (après le début).',
   lieu_invalide: 'Lieu invalide (120 caractères maximum).',
+  liens_invalides: 'Liste de liens invalide (20 liens maximum, titre obligatoire).',
+  lien_url_invalide: 'Adresse de lien invalide : elle doit commencer par http:// ou https://.',
+  classement_invalide: 'Classement invalide.',
+  concours_invalide: 'Concours invalide.',
+  titre_banniere_invalide: 'Titre de la bannière invalide (80 caractères maximum).',
+  sous_titre_invalide: 'Sous-titre invalide (200 caractères maximum).',
+  logo_invalide: 'Réglage du logo invalide.',
   visibilite_invalide: 'Visibilité invalide.',
   identifiants_invalides: 'Identifiant ou mot de passe incorrect.',
   identifiant_ou_mot_de_passe_manquant: 'Renseignez l’identifiant et le mot de passe.',
@@ -192,6 +199,7 @@ function requireLogin() {
 const MODULE_LABELS = {
   calendrier: 'Calendrier', carrousel: 'Carrousel de photos', billet: 'Billet',
   billets: 'Liste de billets', texte: 'Texte libre',
+  liens: 'Partenaires et liens utiles', resultats: 'Résultats du concours',
 };
 const fmtDateTime = d => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 
@@ -199,11 +207,16 @@ const fmtDateTime = d => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: '
 const placeStyle = m => `--x:${m.x};--y:${m.y};--w:${m.w};--h:${m.h};--order:${m.y * 100 + m.x}`;
 
 async function pageHome() {
-  const site = await api('/site').catch(() => ({ clubName: 'Club photo' }));
-  document.title = site.clubName;
-  $('#club-name').textContent = site.clubName;
-
-  const { grid, modules } = await api('/home').catch(() => ({ grid: { columns: 12, rowHeight: 80 }, modules: [] }));
+  const { hero, grid, modules } = await api('/home').catch(() => ({
+    hero: { titre: 'Club photo', sousTitre: '', logo: false }, grid: { columns: 12, rowHeight: 80 }, modules: [],
+  }));
+  document.title = hero.titre;
+  $('#hero').innerHTML = `
+    <div class="hero-inner">
+      ${hero.logo ? '<img class="hero-logo" src="/assets/logo/logo.png" alt="">' : ''}
+      <h1>${esc(hero.titre)}</h1>
+      ${hero.sousTitre ? `<p>${esc(hero.sousTitre)}</p>` : ''}
+    </div>`;
   $('#home-grid').innerHTML = modules.length
     ? `<div class="home-grid" style="--cols:${grid.columns};--row-h:${grid.rowHeight}px">${
         modules.map(m => `<section class="hm" style="${placeStyle(m)}">${moduleHTML(m)}</section>`).join('')
@@ -232,6 +245,27 @@ function moduleHTML(m) {
         : '<p class="muted">Pas encore de billet.</p>');
     case 'texte':
       return title + `<div style="white-space:pre-line">${esc(m.params.contenu || '')}</div>`;
+    case 'liens': {
+      const items = m.params.items || [];
+      return title + (items.length
+        ? `<ul class="link-list">${items.map(i => `
+            <li><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.titre)}</a>${
+              i.description ? `<span class="muted"> · ${esc(i.description)}</span>` : ''}</li>`).join('')}</ul>`
+        : '<p class="muted">Aucun lien pour le moment.</p>');
+    }
+    case 'resultats': {
+      const r = m.data;
+      if (!r.contest) return title + '<p class="muted">Aucun concours clôturé pour le moment.</p>';
+      const label = r.classement === 'jury' ? 'Jury' : 'Membres';
+      return title + `
+        <p class="muted"><a href="/pages/concours.html?id=${r.contest.id}">${esc(r.contest.title)}</a> · classement ${label.toLowerCase()}</p>
+        ${r.ranking.length
+          ? `<ol class="result-list">${r.ranking.map(p => `
+              <li><span class="result-rank">${p.rank}</span>
+                <span>${esc(p.title || 'Sans titre')} <small class="muted">${esc(p.author)}</small></span>
+                <strong>${p.average}</strong></li>`).join('')}</ol>`
+          : '<p class="muted">Aucune note pour ce concours.</p>'}`;
+    }
     default:
       return '';
   }
@@ -1123,10 +1157,26 @@ const toLocalInput = iso => {
 const fromLocalInput = v => (v ? new Date(v).toISOString() : null);
 
 // Champs de réglages propres à chaque type de module
-function moduleParamFields(type, p, posts) {
+function moduleParamFields(type, p, posts, contests) {
   const titre = `<div class="field"><label>Titre affiché (facultatif)</label><input name="titre" maxlength="80" value="${esc(p.titre || '')}"></div>`;
   const num = (name, label, val, min, max) => `<div class="field"><label>${label}</label><input type="number" name="${name}" value="${val}" min="${min}" max="${max}"></div>`;
   switch (type) {
+    case 'liens': {
+      const lines = (p.items || []).map(i => `${i.titre} | ${i.url} | ${i.description || ''}`).join('\n');
+      return titre + `<div class="field"><label>Liens : une ligne par lien, au format « Titre | https://adresse | description »</label>
+        <textarea name="liens" rows="5" placeholder="Fédération photo | https://example.org | Adhésion et assurance">${esc(lines)}</textarea></div>`;
+    }
+    case 'resultats': {
+      const closed = contests.filter(c => c.status === 'clos');
+      return titre + num('nombre', 'Nombre de photos classées', p.nombre || 3, 1, 10)
+        + `<div class="field"><label>Classement</label><select name="classement">
+            <option value="membres"${p.classement !== 'jury' ? ' selected' : ''}>par les membres</option>
+            <option value="jury"${p.classement === 'jury' ? ' selected' : ''}>par le jury</option></select></div>
+        <div class="field"><label>Concours</label><select name="concoursId">
+            <option value="">Le dernier concours clôturé</option>
+            ${closed.map(c => `<option value="${c.id}"${c.id === p.concoursId ? ' selected' : ''}>${esc(c.title)}</option>`).join('')}
+          </select></div>`;
+    }
     case 'calendrier':
       return titre + num('nombre', 'Évènements à venir affichés', p.nombre || 5, 1, 10);
     case 'carrousel':
@@ -1153,10 +1203,21 @@ function moduleParamFields(type, p, posts) {
 function readModuleParams(type, card) {
   const v = name => { const el = card.querySelector(`[name="${name}"]`); return el ? el.value : undefined; };
   const params = { titre: v('titre') };
-  if (['calendrier', 'carrousel', 'billets'].includes(type)) params.nombre = Number(v('nombre'));
+  if (['calendrier', 'carrousel', 'billets', 'resultats'].includes(type)) params.nombre = Number(v('nombre'));
   if (type === 'carrousel') params.intervalle = Number(v('intervalle'));
   if (type === 'billet') params.postId = v('postId') ? Number(v('postId')) : null;
   if (type === 'texte') params.contenu = v('contenu');
+  if (type === 'resultats') {
+    params.classement = v('classement');
+    params.concoursId = v('concoursId') ? Number(v('concoursId')) : null;
+  }
+  if (type === 'liens') {
+    // Une ligne par lien : « Titre | adresse | description » ; les lignes vides sont ignorées
+    params.items = (v('liens') || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+      const [titre = '', url = '', ...rest] = l.split('|').map(s => s.trim());
+      return { titre, url, description: rest.join(' | ') };
+    });
+  }
   return params;
 }
 
@@ -1174,10 +1235,11 @@ function gridPreviewHTML(modules, grid) {
 
 TAB_LOADERS.home = async () => {
   const panel = document.querySelector('[data-panel="home"]');
-  const [{ grid, modules, types }, { posts }, eventsData] = await Promise.all([
+  const [{ hero, grid, modules, types }, { posts }, eventsData, { contests }] = await Promise.all([
     api('/home/manage'),
     can(ME, 'post:manage') ? api('/posts/manage') : Promise.resolve({ posts: [] }),
     can(ME, 'post:manage') ? api('/home/events') : Promise.resolve({ events: [] }),
+    api('/contests').catch(() => ({ contests: [] })),
   ]);
 
   const moduleCard = m => `
@@ -1190,7 +1252,7 @@ TAB_LOADERS.home = async () => {
         <div class="field"><label>Largeur (cases)</label><input type="number" name="w" value="${m.w}" min="1" max="${grid.columns}"></div>
         <div class="field"><label>Hauteur (cases)</label><input type="number" name="h" value="${m.h}" min="1" max="60"></div>
       </div>
-      ${moduleParamFields(m.type, m.params || {}, posts)}
+      ${moduleParamFields(m.type, m.params || {}, posts, contests)}
       <p class="inline">
         <button data-save-module="${m.id}">Enregistrer</button>
         <button class="secondary" data-del-module="${m.id}">Supprimer</button>
@@ -1214,6 +1276,16 @@ TAB_LOADERS.home = async () => {
   const nextY = modules.reduce((max, m) => Math.max(max, m.y + m.h), 0);
   panel.innerHTML = `
     <p id="home-msg" class="muted" role="status"></p>
+
+    <section class="card">
+      <h2>Bannière</h2>
+      <form id="hero-form">
+        <div class="field"><label>Titre (vide = nom du club)</label><input name="titre" maxlength="80" value="${esc(hero.titre)}"></div>
+        <div class="field"><label>Sous-titre</label><input name="sousTitre" maxlength="200" value="${esc(hero.sousTitre)}"></div>
+        <label class="check"><input type="checkbox" name="logo"${hero.logo ? ' checked' : ''}> Afficher le logo dans la bannière</label>
+        <p><button type="submit">Enregistrer la bannière</button></p>
+      </form>
+    </section>
 
     <section class="card">
       <h2>Grille</h2>
@@ -1253,6 +1325,20 @@ TAB_LOADERS.home = async () => {
         </form>
       </section>
       ${eventsData.events.map(eventCard).join('')}` : ''}`;
+
+  // Bannière
+  panel.querySelector('#hero-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await api('/home/hero', { method: 'PUT', body: {
+        titre: field(f, 'titre').value,
+        sousTitre: field(f, 'sousTitre').value,
+        logo: field(f, 'logo').checked,
+      } });
+      say($('#home-msg'), 'Bannière enregistrée.', true);
+    } catch (err) { say($('#home-msg'), err.message); }
+  });
 
   // Grille
   panel.querySelector('#grid-form').addEventListener('submit', async e => {

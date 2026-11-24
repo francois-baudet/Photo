@@ -305,6 +305,23 @@ td .thumb-btn { width: auto; }
 .cal-list { margin: 0; padding-left: 18px; font-size: 0.9rem; }
 .cal-list li + li { margin-top: 4px; }
 
+/* Liens utiles */
+.link-list { margin: 0; padding-left: 18px; }
+.link-list li + li { margin-top: 6px; }
+
+/* Résultats du concours */
+.result-list { list-style: none; margin: 0; padding: 0; }
+.result-list li { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.result-list li:last-child { border-bottom: 0; }
+.result-list li > span:nth-child(2) { flex: 1; min-width: 0; }
+.result-rank { font-weight: 700; color: var(--accent); min-width: 1.5em; }
+
+/* Bannière d'accueil */
+.hero-inner { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.hero-inner h1 { margin: 0; }
+.hero-inner p { margin: 0; opacity: 0.9; }
+.hero-logo { height: 72px; width: auto; background: #fff; border-radius: 8px; padding: 6px 10px; margin-bottom: 4px; }
+
 /* Mobile : les modules s'empilent, dans l'ordre de la grille */
 @media (max-width: 700px) {
   .home-grid { grid-template-columns: 1fr; grid-auto-rows: auto; }
