@@ -16,53 +16,93 @@ const bad = (res, error) => res.status(400).json({ error });
 router.use(requireAuth);
 
 // ---------- Utilisateurs ----------
+const { normalizeEmail } = require('../controllers/authController');
+
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,32}$/;
+const TEMP_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+
+// Mot de passe provisoire lisible, communiqué une seule fois à l'administrateur
+function temporaryPassword() {
+  return Array.from(crypto.randomBytes(12), b => TEMP_CHARS[b % TEMP_CHARS.length]).join('');
+}
+
+const USER_COLUMNS = `u.id, u.username, u.display_name AS "displayName", u.email, u.active,
+            u.role_id AS "roleId", r.name AS role, u.must_change_password AS "mustChangePassword",
+            u.created_at AS "createdAt"`;
+
+// Traduit une violation d'unicité (identifiant ou e-mail déjà pris)
+function userConflict(err, res) {
+  if (err.code !== '23505') return false;
+  res.status(409).json({ error: err.constraint === 'users_email_unique' ? 'email_deja_utilise' : 'identifiant_deja_pris' });
+  return true;
+}
+
 router.get('/users', requirePermission('user:manage'), async (req, res) => {
   const { rows } = await query(
-    `SELECT u.id, u.username, u.display_name AS "displayName", u.active,
-            u.role_id AS "roleId", r.name AS role, u.created_at AS "createdAt"
-       FROM users u JOIN roles r ON r.id = u.role_id
-      ORDER BY u.username`
+    `SELECT ${USER_COLUMNS} FROM users u JOIN roles r ON r.id = u.role_id ORDER BY u.username`
   );
   res.json({ users: rows });
 });
 
+// Création : mot de passe fourni ou généré ; le compte doit changer de mot de passe à la première connexion
 router.post('/users', requirePermission('user:manage'), async (req, res) => {
-  const { username, displayName, password, roleId } = req.body || {};
-  if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username)) return bad(res, 'identifiant_invalide');
-  if (typeof password !== 'string' || password.length < 8) return bad(res, 'mot_de_passe_trop_court');
+  const { username, displayName, email, roleId, password } = req.body || {};
+  if (typeof username !== 'string' || !USERNAME_RE.test(username)) return bad(res, 'identifiant_invalide');
+  const mail = normalizeEmail(email);
+  if (mail === undefined) return bad(res, 'email_invalide');
   if (!Number.isInteger(roleId)) return bad(res, 'role_invalide');
+  const given = typeof password === 'string' && password.length > 0;
+  if (given && password.length < 8) return bad(res, 'mot_de_passe_trop_court');
+  const clear = given ? password : temporaryPassword();
   try {
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(clear, 10);
     const { rows } = await query(
-      `INSERT INTO users (username, display_name, password_hash, role_id)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [username, (displayName || username).trim(), hash, roleId]
+      `INSERT INTO users (username, display_name, email, password_hash, role_id, must_change_password)
+       VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
+      [username, (typeof displayName === 'string' && displayName.trim()) || username, mail, hash, roleId]
     );
-    res.status(201).json({ id: rows[0].id });
+    res.status(201).json({ id: rows[0].id, temporaryPassword: clear });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'identifiant_deja_pris' });
+    if (userConflict(err, res)) return;
     if (err.code === '23503') return bad(res, 'role_invalide');
     throw err;
   }
 });
 
+// Modification de tous les champs. Un mot de passe défini par l'administrateur oblige à le changer.
 router.patch('/users/:id', requirePermission('user:manage'), async (req, res) => {
   const id = Number(req.params.id);
-  const { displayName, roleId, active, password } = req.body || {};
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
+  const body = req.body || {};
   const sets = [];
   const params = [];
-  if (typeof displayName === 'string' && displayName.trim()) {
-    params.push(displayName.trim()); sets.push(`display_name = $${params.length}`);
+  const set = (column, value) => { params.push(value); sets.push(`${column} = $${params.length}`); };
+
+  if (body.username !== undefined) {
+    if (typeof body.username !== 'string' || !USERNAME_RE.test(body.username)) return bad(res, 'identifiant_invalide');
+    set('username', body.username);
   }
-  if (Number.isInteger(roleId)) {
-    params.push(roleId); sets.push(`role_id = $${params.length}`);
+  if (body.displayName !== undefined) {
+    if (typeof body.displayName !== 'string' || !body.displayName.trim()) return bad(res, 'nom_invalide');
+    set('display_name', body.displayName.trim());
   }
-  if (typeof active === 'boolean') {
-    params.push(active); sets.push(`active = $${params.length}`);
+  if (body.email !== undefined) {
+    const mail = normalizeEmail(body.email);
+    if (mail === undefined) return bad(res, 'email_invalide');
+    set('email', mail);
   }
-  if (typeof password === 'string') {
-    if (password.length < 8) return bad(res, 'mot_de_passe_trop_court');
-    params.push(await bcrypt.hash(password, 10)); sets.push(`password_hash = $${params.length}`);
+  if (body.roleId !== undefined) {
+    if (!Number.isInteger(body.roleId)) return bad(res, 'role_invalide');
+    set('role_id', body.roleId);
+  }
+  if (body.active !== undefined) {
+    if (typeof body.active !== 'boolean') return bad(res, 'valeur_invalide');
+    set('active', body.active);
+  }
+  if (body.password !== undefined) {
+    if (typeof body.password !== 'string' || body.password.length < 8) return bad(res, 'mot_de_passe_trop_court');
+    set('password_hash', await bcrypt.hash(body.password, 10));
+    set('must_change_password', true);
   }
   if (!sets.length) return bad(res, 'rien_a_modifier');
 
@@ -71,10 +111,25 @@ router.patch('/users/:id', requirePermission('user:manage'), async (req, res) =>
     const { rowCount } = await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
     if (!rowCount) return res.status(404).json({ error: 'introuvable' });
   } catch (err) {
+    if (userConflict(err, res)) return;
     if (err.code === '23503') return bad(res, 'role_invalide');
     throw err;
   }
   res.json({ ok: true });
+});
+
+// Réinitialisation : mot de passe provisoire généré, à changer à la prochaine connexion
+router.post('/users/:id/reset-password', requirePermission('user:manage'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
+  const clear = temporaryPassword();
+  const hash = await bcrypt.hash(clear, 10);
+  const { rowCount } = await query(
+    'UPDATE users SET password_hash = $1, must_change_password = true WHERE id = $2',
+    [hash, id]
+  );
+  if (!rowCount) return res.status(404).json({ error: 'introuvable' });
+  res.json({ temporaryPassword: clear });
 });
 
 // ---------- Rôles et droits ----------

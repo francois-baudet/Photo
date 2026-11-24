@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Créer mon compte · Club photo</title>
+  <title>Créer mon compte · ASCG Photo</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body data-page="register">
   <header class="site">
-    <a class="brand" href="/index.html">Club photo</a>
+    <a class="brand" href="/index.html"><img src="/assets/logo/logo.png" alt="ASCG Photo"></a>
     <nav class="main" id="nav"></nav>
     <span class="role-switch" id="user-status"></span>
   </header>
@@ -20,6 +20,7 @@
       <form id="register-form">
         <div class="field"><label for="reg-user">Identifiant</label><input id="reg-user" name="user" required pattern="[a-zA-Z0-9_.-]{3,32}"></div>
         <div class="field"><label for="reg-name">Nom affiché</label><input id="reg-name" name="displayName"></div>
+        <div class="field"><label for="reg-email">E-mail (optionnel)</label><input id="reg-email" name="email" type="email"></div>
         <div class="field"><label for="reg-pwd">Mot de passe (8 caractères minimum)</label><input id="reg-pwd" name="pwd" type="password" minlength="8" required></div>
         <button type="submit">Créer le compte</button>
         <p id="register-msg" class="muted" role="status"></p>
@@ -27,7 +28,7 @@
     </section>
   </main>
 
-  <footer class="site">Club photo</footer>
+  <footer class="site">ASCG Photo</footer>
   <script src="/js/app.js"></script>
 </body>
 </html>

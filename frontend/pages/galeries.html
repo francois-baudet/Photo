@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Galeries · Club photo</title>
+  <title>Galeries · ASCG Photo</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body data-page="galleries">
   <header class="site">
-    <a class="brand" href="/index.html">Club photo</a>
+    <a class="brand" href="/index.html"><img src="/assets/logo/logo.png" alt="ASCG Photo"></a>
     <nav class="main" id="nav"></nav>
     <span class="role-switch" id="user-status"></span>
   </header>
@@ -22,13 +22,14 @@
       <form id="gallery-form">
         <div class="field"><label for="g-title">Titre</label><input id="g-title" name="title" maxlength="120" required></div>
         <div class="field"><label for="g-visibility">Visibilité</label><select id="g-visibility" name="visibility"></select></div>
+        <div class="field"><label for="g-upload">Qui peut déposer des photos</label><select id="g-upload" name="uploadAccess"></select></div>
         <button type="submit">Créer la galerie</button>
         <p id="gallery-msg" class="muted" role="status"></p>
       </form>
     </section>
   </main>
 
-  <footer class="site">Club photo</footer>
+  <footer class="site">ASCG Photo</footer>
   <script src="/js/app.js"></script>
 </body>
 </html>

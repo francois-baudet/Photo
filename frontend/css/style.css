@@ -1,36 +1,40 @@
-/* Charte provisoire : à remplacer quand les logos et la charte seront fournis */
+/* Charte ASCG Photo, tirée du logo (rouge, taupe, gris). Couleurs de marque : --brand-*. */
 :root {
-  --bg: #f6f6f4;
+  --brand-red: #ed2227;
+  --brand-taupe: #9e8c7b;
+  --brand-grey: #58595b;
+
+  --bg: #f7f5f2;
   --surface: #ffffff;
-  --text: #1d1d1b;
-  --muted: #6b6b66;
-  --accent: #2f5d62;
+  --text: #2b2b2b;
+  --muted: #6d6962;
+  --accent: #c8242b;        /* rouge du logo, assez foncé pour le texte blanc (contraste AA) */
   --accent-text: #ffffff;
-  --border: #dcdcd6;
+  --border: #ddd6cc;
   --radius: 8px;
   --gutter: 16px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #161716;
-    --surface: #1f201f;
-    --text: #ecece8;
-    --muted: #9a9a94;
-    --accent: #7fb3b8;
-    --accent-text: #101111;
-    --border: #333431;
+    --bg: #141414;
+    --surface: #1e1e1e;
+    --text: #efeeea;
+    --muted: #a9a39a;
+    --accent: #ff5559;
+    --accent-text: #141414;
+    --border: #3a3634;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #161716;
-  --surface: #1f201f;
-  --text: #ecece8;
-  --muted: #9a9a94;
-  --accent: #7fb3b8;
-  --accent-text: #101111;
-  --border: #333431;
+  --bg: #141414;
+  --surface: #1e1e1e;
+  --text: #efeeea;
+  --muted: #a9a39a;
+  --accent: #ff5559;
+  --accent-text: #141414;
+  --border: #3a3634;
 }
 
 * { box-sizing: border-box; }
@@ -53,10 +57,12 @@ header.site {
   gap: 12px;
   padding: 12px var(--gutter);
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 3px solid var(--brand-red);
 }
 
-header.site .brand { font-weight: 700; text-decoration: none; color: var(--text); }
+/* Logo : fond blanc, pour rester lisible en mode sombre */
+header.site .brand { display: inline-flex; text-decoration: none; background: #fff; border-radius: 6px; padding: 2px 6px; }
+header.site .brand img { height: 44px; width: auto; display: block; }
 
 nav.main { display: flex; flex-wrap: wrap; gap: 14px; }
 nav.main a { text-decoration: none; color: var(--text); }
@@ -81,8 +87,9 @@ h2 { font-size: 1.2rem; margin: 1em 0 0.5em; }
 .hero {
   padding: 48px var(--gutter);
   border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--brand-grey);
+  color: #fff;
+  border-bottom: 6px solid var(--brand-red);
   margin-bottom: var(--gutter);
 }
 .hero h1 { margin-top: 0; }

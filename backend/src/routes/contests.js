@@ -33,10 +33,10 @@ async function membershipOf(contestId, userId) {
 }
 
 // Les notes sont visibles pendant le concours si l'option le prévoit, sinon à la clôture.
-function notesVisible(contest, user) {
-  return contest.notes_visibility === 'pendant'
-    || contest.status === 'clos'
-    || hasPermission(user, 'contest:manage');
+// La règle vaut pour tout le monde, gestionnaires compris : moyennes et classements restent masqués
+// tant que le concours n'est pas clos (réglage « à la fin du concours »).
+function notesVisible(contest) {
+  return contest.notes_visibility === 'pendant' || contest.status === 'clos';
 }
 
 // Photos de la galerie du concours, avec moyennes (uniquement si les notes sont visibles)
@@ -57,7 +57,7 @@ async function contestPhotos(contest, user) {
       ORDER BY p.id`,
     [contest.gallery_id, user.id]
   );
-  const visible = notesVisible(contest, user);
+  const visible = notesVisible(contest);
   return rows.map(p => ({
     id: p.id,
     title: p.title,
@@ -168,7 +168,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       juryCount: contest.jury_count,
       autoNotation: contest.auto_notation,
       notesVisibility: contest.notes_visibility,
-      notesVisible: notesVisible(contest, req.user),
+      notesVisible: notesVisible(contest),
       jurors: canManage ? jurors : jurors.length,
       members: canManage ? members : members.length,
       me: { juror: me.juror, member: me.member, canScore: canScoreNow, canUpload },
@@ -342,7 +342,7 @@ router.delete('/:id', requireAuth, requirePermission('contest:manage'), async (r
 router.get('/:id/scores', requireAuth, async (req, res) => {
   const contest = await loadContest(Number(req.params.id));
   if (!contest) return res.status(404).json({ error: 'introuvable' });
-  if (!notesVisible(contest, req.user)) return res.status(403).json({ error: 'notes_non_visibles' });
+  if (!notesVisible(contest)) return res.status(403).json({ error: 'notes_non_visibles' });
 
   const { rows } = await query(
     `SELECT s.photo_id AS "photoId", s.scorer_kind AS kind, u.display_name AS scorer, s.value::float AS value
@@ -358,7 +358,7 @@ router.get('/:id/scores', requireAuth, async (req, res) => {
 router.get('/:id/ranking', requireAuth, async (req, res) => {
   const contest = await loadContest(Number(req.params.id));
   if (!contest) return res.status(404).json({ error: 'introuvable' });
-  if (!notesVisible(contest, req.user)) return res.status(403).json({ error: 'notes_non_visibles' });
+  if (!notesVisible(contest)) return res.status(403).json({ error: 'notes_non_visibles' });
 
   const photos = await contestPhotos(contest, req.user);
   const rank = (key) => photos

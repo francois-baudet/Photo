@@ -4,6 +4,10 @@
 
 const API = '/api';
 const VISIBILITIES = ['public', 'membres', 'concours', 'jury', 'admin'];
+const UPLOAD_ACCESS_LABELS = {
+  proprietaire: 'Propriétaire et gestionnaires seulement',
+  membres: 'Tous les membres autorisés à déposer',
+};
 const METADATA_LABELS = {
   camera: 'Boîtier', lens: 'Objectif', iso: 'ISO', aperture: 'Ouverture',
   shutter: 'Vitesse', focal_length: 'Focale', date: 'Date',
@@ -32,6 +36,11 @@ const ERRORS = {
   aucun_fichier: 'Aucun fichier sélectionné.',
   sens_invalide: 'Sens de rotation invalide.',
   pas_d_apercu: 'Cette photo n’a pas d’aperçu à faire pivoter.',
+  changement_mot_de_passe_requis: 'Vous devez d’abord changer votre mot de passe.',
+  mot_de_passe_identique: 'Le nouveau mot de passe doit être différent de l’ancien.',
+  mot_de_passe_actuel_incorrect: 'Le mot de passe actuel est incorrect.',
+  email_invalide: 'Adresse e-mail invalide.',
+  email_deja_utilise: 'Cette adresse e-mail est déjà utilisée.',
   deja_note:'Vous avez déjà noté cette photo : la note est définitive.',
   nombre_de_jures_invalide: 'Nombre de jurés invalide (0 à 20).',
   concours_ouvert_reglages_figes: 'Le concours est ouvert : seuls les membres et la visibilité des notes sont modifiables.',
@@ -186,11 +195,12 @@ function pageLogin() {
     e.preventDefault();
     say($('#login-msg'), 'Connexion…');
     try {
-      await api('/auth/login', {
+      const { user } = await api('/auth/login', {
         method: 'POST',
         body: { username: field(form, 'user').value.trim(), password: field(form, 'pwd').value },
       });
-      location.href = '/index.html';
+      // Mot de passe provisoire : changement obligatoire avant d'aller plus loin
+      location.href = user.mustChangePassword ? '/pages/mot-de-passe.html' : '/index.html';
     } catch (err) {
       say($('#login-msg'), err.message);
     }
@@ -215,6 +225,7 @@ function pageRegister() {
           token,
           username: field(form, 'user').value.trim(),
           displayName: field(form, 'displayName').value.trim(),
+          email: field(form, 'email').value.trim(),
           password: field(form, 'pwd').value,
         },
       });
@@ -251,12 +262,18 @@ async function pageGalleries() {
   const form = $('#gallery-form');
   $('#btn-new-gallery').hidden = false;
   $('#g-visibility').innerHTML = VISIBILITIES.map(v => `<option value="${v}">${v}</option>`).join('');
+  $('#g-upload').innerHTML = Object.entries(UPLOAD_ACCESS_LABELS)
+    .map(([v, label]) => `<option value="${v}">${esc(label)}</option>`).join('');
   form.addEventListener('submit', async e => {
     e.preventDefault();
     try {
       await api('/galleries', {
         method: 'POST',
-        body: { title: field(form, 'title').value, visibility: field(form, 'visibility').value },
+        body: {
+          title: field(form, 'title').value,
+          visibility: field(form, 'visibility').value,
+          uploadAccess: field(form, 'uploadAccess').value,
+        },
       });
       form.reset();
       say($('#gallery-msg'), 'Galerie créée.', true);
@@ -326,16 +343,25 @@ async function pageGallery() {
     const edit = $('#visibility-form');
     field(edit, 'visibility').innerHTML = VISIBILITIES
       .map(v => `<option value="${v}"${v === gallery.visibility ? ' selected' : ''}>${v}</option>`).join('');
+    // Le dépôt se règle sur les galeries classiques ; une galerie de concours suit les règles du concours
+    const uploadField = field(edit, 'uploadAccess');
+    uploadField.closest('.field').hidden = gallery.kind !== 'classique';
+    uploadField.innerHTML = Object.entries(UPLOAD_ACCESS_LABELS)
+      .map(([v, label]) => `<option value="${v}"${v === gallery.uploadAccess ? ' selected' : ''}>${esc(label)}</option>`).join('');
     edit.addEventListener('submit', async e => {
       e.preventDefault();
+      const body = { visibility: field(edit, 'visibility').value };
+      if (gallery.kind === 'classique') body.uploadAccess = uploadField.value;
       try {
-        await api(`/galleries/${id}`, { method: 'PATCH', body: { visibility: field(edit, 'visibility').value } });
-        say($('#visibility-msg'), 'Visibilité enregistrée.', true);
+        await api(`/galleries/${id}`, { method: 'PATCH', body });
+        say($('#visibility-msg'), 'Réglages enregistrés.', true);
       } catch (err) {
         say($('#visibility-msg'), err.message);
       }
     });
   }
+
+  if (gallery.canDownload && photos.length) setupDownload(id, photos);
 
   if (gallery.contestId) {
     view.insertAdjacentHTML('afterbegin',
@@ -362,6 +388,24 @@ async function pageGallery() {
       }
     });
   }
+}
+
+// ---------- Téléchargement : liste cochable des fichiers RAW, archive ZIP ----------
+function setupDownload(galleryId, photos) {
+  $('#btn-download').hidden = false;
+  const list = $('#download-list');
+  list.innerHTML = photos.map(p => `
+    <label class="check"><input type="checkbox" name="dl" value="${p.id}"> ${esc(p.title || '(sans titre)')}${p.rawExt ? ` <span class="muted">${esc(p.rawExt)}</span>` : ''}</label>`).join('');
+  const boxes = () => [...list.querySelectorAll('input[name="dl"]')];
+  $('#dl-all').addEventListener('click', () => boxes().forEach(b => { b.checked = true; }));
+  $('#dl-none').addEventListener('click', () => boxes().forEach(b => { b.checked = false; }));
+  $('#dl-go').addEventListener('click', () => {
+    const ids = boxes().filter(b => b.checked).map(b => b.value);
+    if (!ids.length) return say($('#download-msg'), 'Aucun fichier sélectionné.');
+    // Le serveur contrôle la permission et la visibilité ; la réponse est une pièce jointe ZIP
+    location.href = `${API}/galleries/${galleryId}/download?ids=${ids.join(',')}`;
+    say($('#download-msg'), `Téléchargement de ${ids.length} fichier(s) lancé.`, true);
+  });
 }
 
 // ---------- Concours ----------
@@ -459,7 +503,15 @@ async function pageContest() {
   await renderContestEditor(contest, id);
   await renderContestActions(contest, id);
   renderPhotos(contest, photos);
-  if (contest.notesVisible) await renderRanking(id);
+  // Moyennes et classements : seulement quand les notes sont visibles (réglage du concours)
+  if (contest.notesVisible) {
+    $('#ranking-block').hidden = false;
+    await renderRanking(id);
+  } else {
+    $('#ranking-block').hidden = true;
+    view.insertAdjacentHTML('beforeend',
+      '<p class="muted">Les moyennes et les classements seront publiés à la clôture du concours.</p>');
+  }
 }
 
 // Formulaire de modification d'un concours (gestionnaire des concours).
@@ -520,13 +572,88 @@ async function renderContestEditor(contest, id) {
   });
 }
 
+// Filtre et tri de la liste des photos selon MES notes. Choix conservés pendant la session de page.
+let PHOTO_FILTER = 'toutes'; // toutes | notees | non_notees
+let PHOTO_SORT = 'ordre';    // ordre | desc | asc  (photos non notées toujours en fin de liste)
+
+function hasMyScore(p) {
+  return p.myScore !== null && p.myScore !== undefined;
+}
+
+function filterAndSortPhotos(photos) {
+  let list = photos.filter(p => {
+    if (PHOTO_FILTER === 'notees') return hasMyScore(p);
+    if (PHOTO_FILTER === 'non_notees') return !hasMyScore(p);
+    return true;
+  });
+  if (PHOTO_SORT !== 'ordre') {
+    const dir = PHOTO_SORT === 'desc' ? -1 : 1;
+    list = list.slice().sort((a, b) => {
+      if (!hasMyScore(a) || !hasMyScore(b)) return hasMyScore(a) === hasMyScore(b) ? 0 : (hasMyScore(a) ? -1 : 1);
+      return dir * (a.myScore - b.myScore);
+    });
+  }
+  return list;
+}
+
 function renderPhotos(contest, photos) {
+  // Filtre et tri utiles à qui note (membre ou juré)
+  const canFilter = (contest.me.member || contest.me.juror) && photos.length > 0;
+  $('#contest-photos').innerHTML = photos.length
+    ? `${canFilter ? `
+         <div class="inline photo-tools">
+           <label>Afficher <select id="photo-filter">
+             <option value="toutes">toutes les photos</option>
+             <option value="notees">notées par moi</option>
+             <option value="non_notees">non notées par moi</option>
+           </select></label>
+           <label>Trier par <select id="photo-sort">
+             <option value="ordre">ordre d’inscription</option>
+             <option value="desc">ma note, décroissante</option>
+             <option value="asc">ma note, croissante</option>
+           </select></label>
+         </div>` : ''}
+       <div id="photo-table"></div>
+       <p id="score-msg" class="muted" role="status"></p>`
+    : '<p class="muted">Aucune photo inscrite pour le moment.</p>';
+  if (!photos.length) return;
+
+  if (canFilter) {
+    $('#photo-filter').value = PHOTO_FILTER;
+    $('#photo-sort').value = PHOTO_SORT;
+    $('#photo-filter').addEventListener('change', e => { PHOTO_FILTER = e.target.value; drawPhotoTable(contest, photos); });
+    $('#photo-sort').addEventListener('change', e => { PHOTO_SORT = e.target.value; drawPhotoTable(contest, photos); });
+  }
+
+  // Délégation : le tableau est redessiné à chaque filtre ou tri
+  $('#photo-table').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-score]');
+    if (!btn) return;
+    const photoId = Number(btn.dataset.score);
+    const value = $(`#photo-table [data-photo="${photoId}"]`).value;
+    try {
+      await api(`/contests/${contest.id}/scores`, { method: 'POST', body: { photoId, value: Number(value) } });
+      say($('#score-msg'), 'Note enregistrée.', true);
+      // Moyennes et classements recalculés après chaque vote
+      await pageContest();
+    } catch (err) {
+      say($('#score-msg'), err.message);
+    }
+  });
+
+  drawPhotoTable(contest, photos);
+}
+
+function drawPhotoTable(contest, photos) {
   const canScore = contest.me.canScore;
+  const list = filterAndSortPhotos(photos);
+  // Les vignettes ouvrent la visionneuse dans l'ordre affiché
+  registerLightbox(list);
+
   // Une note par personne et par photo : une fois notée, la note reste affichée sans modification possible
-  const rows = photos.map((p, i) => {
+  const rows = list.map((p, i) => {
     const ownPhoto = p.ownerId === ME.id && !contest.autoNotation;
-    const cell = (v) => contest.notesVisible ? (v ?? '—') : 'masqué';
-    const hasScore = p.myScore !== null && p.myScore !== undefined;
+    const hasScore = hasMyScore(p);
     let scoreCell = hasScore ? p.myScore : '—';
     if (canScore && !ownPhoto) {
       scoreCell = `<input type="number" min="0" max="20" step="0.5" value="${hasScore ? p.myScore : ''}" data-photo="${p.id}" style="width:80px"> <button data-score="${p.id}">${hasScore ? 'Modifier' : 'Noter'}</button>`;
@@ -538,35 +665,17 @@ function renderPhotos(contest, photos) {
       <tr>
         <td>${thumb}</td>
         <td>${esc(p.title)}<br><small class="muted">${esc(p.author)}</small></td>
-        <td>${cell(p.memberAvg)}</td>
-        <td>${cell(p.juryAvg)}</td>
+        ${contest.notesVisible ? `<td>${p.memberAvg ?? '—'}</td><td>${p.juryAvg ?? '—'}</td>` : ''}
         <td>${scoreCell}</td>
       </tr>`;
   }).join('');
 
-  $('#contest-photos').innerHTML = photos.length
+  // Les colonnes de moyennes n'existent que lorsque les notes sont visibles
+  $('#photo-table').innerHTML = list.length
     ? `<div style="overflow-x:auto"><table>
-         <thead><tr><th></th><th>Photo</th><th>Moyenne membres</th><th>Moyenne jury</th><th>Ma note (0–20)</th></tr></thead>
-         <tbody>${rows}</tbody></table></div>
-         <p id="score-msg" class="muted" role="status"></p>`
-    : '<p class="muted">Aucune photo inscrite pour le moment.</p>';
-
-  registerLightbox(photos);
-
-  document.querySelectorAll('[data-score]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const photoId = Number(btn.dataset.score);
-      const value = document.querySelector(`[data-photo="${photoId}"]`).value;
-      try {
-        await api(`/contests/${contest.id}/scores`, { method: 'POST', body: { photoId, value: Number(value) } });
-        say($('#score-msg'), 'Note enregistrée.', true);
-        // Moyennes et classements recalculés après chaque vote
-        await pageContest();
-      } catch (err) {
-        say($('#score-msg'), err.message);
-      }
-    });
-  });
+         <thead><tr><th></th><th>Photo</th>${contest.notesVisible ? '<th>Moyenne membres</th><th>Moyenne jury</th>' : ''}<th>Ma note (0–20)</th></tr></thead>
+         <tbody>${rows}</tbody></table></div>`
+    : '<p class="muted">Aucune photo ne correspond à ce filtre.</p>';
 }
 
 async function renderRanking(contestId) {
@@ -619,53 +728,95 @@ async function loadRoles() {
   return roles;
 }
 
+// Carte de modification d'un utilisateur : tous les champs, plus la réinitialisation du mot de passe
+function userEditCard(u, roles) {
+  return `
+    <section class="card" id="edit-user-${u.id}" hidden>
+      <h3>Modifier ${esc(u.username)}</h3>
+      <div class="field"><label>Identifiant</label><input name="username" value="${esc(u.username)}" required></div>
+      <div class="field"><label>Nom affiché</label><input name="displayName" value="${esc(u.displayName)}" required></div>
+      <div class="field"><label>E-mail (optionnel)</label><input name="email" type="email" value="${esc(u.email || '')}"></div>
+      <div class="field"><label>Rôle</label><select name="roleId">${roleOptions(roles, u.roleId)}</select></div>
+      <label class="check"><input type="checkbox" name="active"${u.active ? ' checked' : ''}> Compte actif</label>
+      <p class="inline">
+        <button data-save-user="${u.id}">Enregistrer</button>
+        <button class="secondary" data-reset-user="${u.id}">Réinitialiser le mot de passe</button>
+      </p>
+    </section>`;
+}
+
 TAB_LOADERS.users = async () => {
   const [{ users }, roles] = await Promise.all([api('/admin/users'), loadRoles()]);
   const panel = document.querySelector('[data-panel="users"]');
   panel.innerHTML = `
     <div style="overflow-x:auto"><table>
-      <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Actif</th></tr></thead>
+      <thead><tr><th>Identifiant</th><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Actif</th><th>Mot de passe</th><th></th></tr></thead>
       <tbody>${users.map(u => `
         <tr>
           <td>${esc(u.username)}</td>
           <td>${esc(u.displayName)}</td>
-          <td><select data-role-user="${u.id}">${roleOptions(roles, u.roleId)}</select></td>
-          <td><input type="checkbox" data-active-user="${u.id}"${u.active ? ' checked' : ''}></td>
+          <td>${esc(u.email || '—')}</td>
+          <td>${esc(u.role)}</td>
+          <td>${u.active ? 'oui' : 'non'}</td>
+          <td>${u.mustChangePassword ? '<span class="badge">à changer</span>' : ''}</td>
+          <td><button class="secondary" data-toggle="edit-user-${u.id}">Modifier</button></td>
         </tr>`).join('')}</tbody>
     </table></div>
+    ${users.map(u => userEditCard(u, roles)).join('')}
     <p id="users-msg" class="muted" role="status"></p>
     <button class="toggle" data-toggle="box-user">+ Nouvel utilisateur</button>
     <section class="card" id="box-user" hidden>
     <form id="new-user">
       <div class="field"><label>Identifiant</label><input name="username" required></div>
       <div class="field"><label>Nom affiché</label><input name="displayName"></div>
-      <div class="field"><label>Mot de passe (8 caractères minimum)</label><input name="password" type="password" required minlength="8"></div>
+      <div class="field"><label>E-mail (optionnel)</label><input name="email" type="email"></div>
+      <div class="field"><label>Mot de passe (optionnel : sinon un mot de passe provisoire est généré)</label><input name="password" type="password" minlength="8"></div>
       <div class="field"><label>Rôle</label><select name="roleId">${roleOptions(roles)}</select></div>
       <button type="submit">Créer</button>
     </form>
     </section>`;
 
-  panel.querySelectorAll('[data-role-user]').forEach(sel => sel.addEventListener('change', async () => {
+  panel.querySelectorAll('[data-save-user]').forEach(btn => btn.addEventListener('click', async () => {
+    const id = btn.dataset.saveUser;
+    const card = panel.querySelector(`#edit-user-${id}`);
+    const body = {
+      username: field(card, 'username').value.trim(),
+      displayName: field(card, 'displayName').value.trim(),
+      email: field(card, 'email').value.trim(),
+      roleId: Number(field(card, 'roleId').value),
+      active: field(card, 'active').checked,
+    };
     try {
-      await api(`/admin/users/${sel.dataset.roleUser}`, { method: 'PATCH', body: { roleId: Number(sel.value) } });
-      say($('#users-msg'), 'Rôle mis à jour.', true);
+      await api(`/admin/users/${id}`, { method: 'PATCH', body });
+      TAB_LOADERS.users();
+      say($('#users-msg'), 'Utilisateur enregistré.', true);
     } catch (err) { say($('#users-msg'), err.message); }
   }));
-  panel.querySelectorAll('[data-active-user]').forEach(box => box.addEventListener('change', async () => {
+
+  panel.querySelectorAll('[data-reset-user]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm("Réinitialiser le mot de passe de cet utilisateur ? Un mot de passe provisoire sera généré, à changer à sa prochaine connexion.")) return;
     try {
-      await api(`/admin/users/${box.dataset.activeUser}`, { method: 'PATCH', body: { active: box.checked } });
-      say($('#users-msg'), 'Compte mis à jour.', true);
+      const { temporaryPassword } = await api(`/admin/users/${btn.dataset.resetUser}/reset-password`, { method: 'POST' });
+      alert(`Mot de passe provisoire (à transmettre, affiché une seule fois) : ${temporaryPassword}`);
+      TAB_LOADERS.users();
     } catch (err) { say($('#users-msg'), err.message); }
   }));
+
   $('#new-user').addEventListener('submit', async e => {
     e.preventDefault();
     const f = e.target;
     try {
-      await api('/admin/users', {
+      const result = await api('/admin/users', {
         method: 'POST',
-        body: { username: field(f, 'username').value, displayName: field(f, 'displayName').value, password: field(f, 'password').value, roleId: Number(field(f, 'roleId').value) },
+        body: {
+          username: field(f, 'username').value.trim(),
+          displayName: field(f, 'displayName').value.trim(),
+          email: field(f, 'email').value.trim(),
+          password: field(f, 'password').value,
+          roleId: Number(field(f, 'roleId').value),
+        },
       });
-      say($('#users-msg'), 'Utilisateur créé.', true);
+      alert(`Compte créé. Mot de passe provisoire (à transmettre, affiché une seule fois) : ${result.temporaryPassword}`);
       TAB_LOADERS.users();
     } catch (err) { say($('#users-msg'), err.message); }
   });
@@ -985,10 +1136,27 @@ function openToolsModal(p) {
   modal.innerHTML = `<div class="meta-box" role="dialog" aria-label="Outils de la photo">
       <div class="inline" style="justify-content:space-between"><strong>${esc(p.title)}</strong>
         <button class="secondary" data-act="close">Fermer</button></div>
-      <div class="tools-list">${actions.join('') || '<p class="muted">Aucune action disponible.</p>'}</div>
+      ${p.canRename ? `<form id="rename-form" class="inline" style="margin-top:12px">
+        <input name="title" value="${esc(p.title)}" maxlength="120" required aria-label="Nouveau titre">
+        <button type="submit">Renommer</button>
+      </form>` : ''}
+      <div class="tools-list">${actions.join('') || (p.canRename ? '' : '<p class="muted">Aucune action disponible.</p>')}</div>
       <p id="tools-msg" class="muted" role="status"></p>
     </div>`;
   document.body.appendChild(modal);
+
+  const renameForm = modal.querySelector('#rename-form');
+  if (renameForm) {
+    renameForm.addEventListener('submit', async e => {
+      e.preventDefault();
+      try {
+        await api(`/photos/${p.id}`, { method: 'PATCH', body: { title: field(renameForm, 'title').value.trim() } });
+        location.reload();
+      } catch (err) {
+        say($('#tools-msg'), err.message);
+      }
+    });
+  }
 
   const close = () => modal.remove();
   modal.addEventListener('click', async e => {
@@ -1116,6 +1284,29 @@ document.addEventListener('click', e => {
   if (box) box.hidden = !box.hidden;
 });
 
+// ---------- Changement de mot de passe ----------
+function pagePassword() {
+  const form = $('#password-form');
+  if (!ME) {
+    say($('#password-msg'), 'Connectez-vous pour changer votre mot de passe.');
+    form.hidden = true;
+    return;
+  }
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const current = field(form, 'current').value;
+    const next = field(form, 'next').value;
+    const confirmValue = field(form, 'confirm').value;
+    if (next !== confirmValue) return say($('#password-msg'), 'Les deux mots de passe ne correspondent pas.');
+    try {
+      await api('/auth/change-password', { method: 'POST', body: { currentPassword: current, newPassword: next } });
+      location.href = '/index.html';
+    } catch (err) {
+      say($('#password-msg'), err.message);
+    }
+  });
+}
+
 // ---------- Démarrage ----------
 const PAGES = {
   home: pageHome,
@@ -1129,12 +1320,17 @@ const PAGES = {
     else await pageContests();
   },
   admin: pageAdmin,
+  password: pagePassword,
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
   renderHeader();
   await loadMe();
   renderHeader();
+  if (ME && ME.mustChangePassword && location.pathname !== '/pages/mot-de-passe.html') {
+    location.href = '/pages/mot-de-passe.html';
+    return;
+  }
   const run = PAGES[document.body.dataset.page];
   if (!run) return;
   try {

@@ -98,6 +98,23 @@ router.post('/:id/rotate', requireAuth, async (req, res) => {
 });
 
 // DELETE /api/photos/:id : supprimer une photo (propriétaire ou gestionnaire des utilisateurs)
+// PATCH /api/photos/:id  { title }  : renommer une photo (propriétaire ou gestionnaire)
+router.patch('/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
+  const title = req.body && req.body.title;
+  if (typeof title !== 'string' || !title.trim() || title.trim().length > 120) {
+    return res.status(400).json({ error: 'titre_invalide' });
+  }
+  const { rows } = await query('SELECT owner_id FROM photos WHERE id = $1', [id]);
+  if (!rows[0]) return res.status(404).json({ error: 'introuvable' });
+  if (rows[0].owner_id !== req.user.id && !hasPermission(req.user, 'user:manage')) {
+    return res.status(403).json({ error: 'acces_refuse' });
+  }
+  await query('UPDATE photos SET title = $1 WHERE id = $2', [title.trim(), id]);
+  res.json({ ok: true });
+});
+
 router.delete('/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });

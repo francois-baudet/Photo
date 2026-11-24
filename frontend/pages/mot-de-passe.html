@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mot de passe · ASCG Photo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="password">
+  <header class="site">
+    <a class="brand" href="/index.html"><img src="/assets/logo/logo.png" alt="ASCG Photo"></a>
+    <nav class="main" id="nav"></nav>
+    <span class="role-switch" id="user-status"></span>
+  </header>
+
+  <main id="main">
+    <section class="card" style="max-width:380px;margin:0 auto">
+      <h1>Changer le mot de passe</h1>
+      <p class="muted">Pour votre sécurité, choisissez un nouveau mot de passe (8 caractères minimum).</p>
+      <form id="password-form">
+        <div class="field"><label for="pw-current">Mot de passe actuel</label><input id="pw-current" name="current" type="password" autocomplete="current-password" required></div>
+        <div class="field"><label for="pw-next">Nouveau mot de passe</label><input id="pw-next" name="next" type="password" autocomplete="new-password" minlength="8" required></div>
+        <div class="field"><label for="pw-confirm">Confirmer le nouveau mot de passe</label><input id="pw-confirm" name="confirm" type="password" autocomplete="new-password" minlength="8" required></div>
+        <button type="submit">Enregistrer</button>
+        <p id="password-msg" class="muted" role="status"></p>
+      </form>
+    </section>
+  </main>
+
+  <footer class="site">ASCG Photo</footer>
+  <script src="/js/app.js"></script>
+</body>
+</html>
