@@ -139,6 +139,8 @@ router.get('/:id', attachUser, async (req, res) => {
       rawExt: p.rawExt || '',
       thumbUrl: p.hasPreview ? `/api/photos/${p.id}/thumb?v=${p.version}` : null,
       previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview?v=${p.version}` : null,
+      // Pleine qualité : tous sauf les visiteurs
+      fullUrl: p.hasPreview && req.user.role !== 'visiteur' ? `/api/photos/${p.id}/full?v=${p.version}` : null,
       rawUrl: editable ? `/api/photos/${p.id}/raw` : null,
       canRotate: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
       canRename: req.user.id !== null && (p.owner_id === req.user.id || hasPermission(req.user, 'user:manage')),
@@ -181,11 +183,11 @@ router.delete('/:id', requireAuth, async (req, res) => {
   if (!canEdit(gallery, req.user)) return res.status(403).json({ error: 'acces_refuse' });
 
   const { rows: files } = await query(
-    'SELECT raw_path, preview_path, thumb_path FROM photos WHERE gallery_id = $1',
+    'SELECT raw_path, preview_path, thumb_path, full_path FROM photos WHERE gallery_id = $1',
     [gallery.id]
   );
   await query('DELETE FROM galleries WHERE id = $1', [gallery.id]);
-  await photos.deleteFiles(files.flatMap(f => [f.raw_path, f.preview_path, f.thumb_path]));
+  await photos.deleteFiles(files.flatMap(f => [f.raw_path, f.preview_path, f.thumb_path, f.full_path]));
   res.json({ ok: true });
 });
 

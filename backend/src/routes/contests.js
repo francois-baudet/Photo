@@ -65,6 +65,7 @@ async function contestPhotos(contest, user) {
     ownerId: p.ownerId,
     thumbUrl: p.hasThumb ? `/api/photos/${p.id}/thumb?v=${p.version}` : null,
     previewUrl: p.hasPreview ? `/api/photos/${p.id}/preview?v=${p.version}` : null,
+    fullUrl: p.hasPreview && user.role !== 'visiteur' ? `/api/photos/${p.id}/full?v=${p.version}` : null,
     myScore: p.myScore,
     memberAvg: visible ? p.memberAvg : null,
     juryAvg: visible ? p.juryAvg : null,
@@ -327,9 +328,9 @@ router.delete('/:id', requireAuth, requirePermission('contest:manage'), async (r
   const { rows: g } = await query('SELECT kind FROM galleries WHERE id = $1', [contest.gallery_id]);
   if (g[0] && g[0].kind === 'concours') {
     const { rows: files } = await query(
-      'SELECT raw_path, preview_path, thumb_path FROM photos WHERE gallery_id = $1', [contest.gallery_id]);
+      'SELECT raw_path, preview_path, thumb_path, full_path FROM photos WHERE gallery_id = $1', [contest.gallery_id]);
     await query('DELETE FROM galleries WHERE id = $1', [contest.gallery_id]); // supprime aussi le concours
-    await photos.deleteFiles(files.flatMap(f => [f.raw_path, f.preview_path, f.thumb_path]));
+    await photos.deleteFiles(files.flatMap(f => [f.raw_path, f.preview_path, f.thumb_path, f.full_path]));
   } else {
     // Galerie déjà convertie : seule la compétition (notes, jurés, membres) est supprimée
     await query('DELETE FROM contests WHERE id = $1', [contest.id]);

@@ -64,9 +64,9 @@ async function readMetadata(file) {
   }
 }
 
-// Aperçu JPEG embarqué dans le RAW (le plus grand disponible)
-async function extractEmbeddedJpeg(file) {
-  for (const tag of ['-PreviewImage', '-JpgFromRaw', '-ThumbnailImage']) {
+// JPEG embarqué dans le RAW : la première balise disponible de la liste (la plus grande en général)
+async function extractEmbeddedJpeg(file, tags = ['-PreviewImage', '-JpgFromRaw', '-ThumbnailImage']) {
+  for (const tag of tags) {
     try {
       const { stdout } = await execFileP('exiftool', ['-b', tag, file], {
         encoding: 'buffer',
@@ -152,6 +152,30 @@ async function visibleFields() {
   return rows[0] ? rows[0].value : [];
 }
 
+// Image en pleine qualité d'une photo (chemin absolu) :
+//  - JPEG : le fichier d'origine, tel quel ;
+//  - RAW  : le JPEG complet embarqué dans le fichier, extrait à la première demande puis conservé.
+// Renvoie null si aucune image n'est disponible.
+async function fullImagePath(photo) {
+  if (JPEG_EXTENSIONS.has(path.extname(photo.raw_path).toLowerCase())) return absolutePath(photo.raw_path);
+  if (photo.full_path) {
+    const existing = absolutePath(photo.full_path);
+    if (await fs.access(existing).then(() => true, () => false)) return existing;
+  }
+  const data = await extractEmbeddedJpeg(absolutePath(photo.raw_path), ['-JpgFromRaw', '-PreviewImage']);
+  if (!data) return null;
+  const relative = `full/${photo.id}.jpg`;
+  await fs.mkdir(absolutePath('full'), { recursive: true });
+  await fs.writeFile(absolutePath(relative), data);
+  await query('UPDATE photos SET full_path = $1 WHERE id = $2', [relative, photo.id]);
+  return absolutePath(relative);
+}
+
+// Image pleine qualité tournée d'un angle (multiple de 90), réencodée en JPEG de haute qualité
+function renderRotated(file, angle) {
+  return sharp(file).rotate(angle).jpeg({ quality: 95 }).toBuffer();
+}
+
 // Supprime les fichiers (chemins relatifs à la racine du stockage) ; ignore ceux qui n'existent plus
 async function deleteFiles(relativePaths) {
   for (const rel of relativePaths.filter(Boolean)) {
@@ -178,4 +202,6 @@ module.exports = {
   importPhoto,
   displayMetadata,
   visibleFields,
+  fullImagePath,
+  renderRotated,
 };

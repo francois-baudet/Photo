@@ -45,6 +45,31 @@ router.get('/:id/info', attachUser, async (req, res) => {
   res.json({ title: photo.title, metadata: photos.displayMetadata(photo.data || {}, fields) });
 });
 
+// GET /api/photos/:id/full : image en pleine qualité, pour tous sauf les visiteurs (visibilité de la galerie)
+// JPEG : fichier d'origine ; RAW : JPEG complet embarqué. Tournée selon les rotations faites dans l'application.
+router.get('/:id/full', attachUser, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
+  if (req.user.role === 'visiteur') return res.status(403).json({ error: 'acces_refuse' });
+
+  const { rows } = await query('SELECT * FROM photos WHERE id = $1', [id]);
+  const photo = rows[0];
+  if (!photo) return res.status(404).json({ error: 'introuvable' });
+  const gallery = await loadGallery(photo.gallery_id);
+  if (!gallery || !(await canView(gallery, req.user))) return res.status(404).json({ error: 'introuvable' });
+
+  const file = await photos.fullImagePath(photo);
+  if (!file) return res.status(404).json({ error: 'fichier_introuvable' });
+
+  res.set('Cache-Control', 'private, max-age=3600');
+  if (!photo.rotation) {
+    return res.sendFile(file, err => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'fichier_introuvable' });
+    });
+  }
+  res.type('jpeg').send(await photos.renderRotated(file, photo.rotation));
+});
+
 // GET /api/photos/:id/:kind  (kind = thumb | preview | raw)
 router.get('/:id/:kind', attachUser, async (req, res) => {
   const id = Number(req.params.id);
@@ -91,9 +116,11 @@ router.post('/:id/rotate', requireAuth, async (req, res) => {
   }
   if (!photo.preview_path) return res.status(400).json({ error: 'pas_d_apercu' });
 
-  await photos.rotateFiles([photo.preview_path, photo.thumb_path], direction === 'cw' ? 90 : 270);
+  const delta = direction === 'cw' ? 90 : 270;
+  await photos.rotateFiles([photo.preview_path, photo.thumb_path], delta);
   const { rows: updated } = await query(
-    'UPDATE photos SET version = version + 1 WHERE id = $1 RETURNING version', [id]);
+    'UPDATE photos SET version = version + 1, rotation = (rotation + $2) % 360 WHERE id = $1 RETURNING version',
+    [id, delta]);
   res.json({ ok: true, version: updated[0].version });
 });
 
@@ -120,7 +147,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
   if (!Number.isInteger(id)) return res.status(404).json({ error: 'introuvable' });
 
   const { rows } = await query(
-    'SELECT owner_id, raw_path, preview_path, thumb_path FROM photos WHERE id = $1',
+    'SELECT owner_id, raw_path, preview_path, thumb_path, full_path FROM photos WHERE id = $1',
     [id]
   );
   const photo = rows[0];
@@ -131,7 +158,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
   // Les métadonnées et les notes partent avec la photo (suppression en cascade)
   await query('DELETE FROM photos WHERE id = $1', [id]);
-  await photos.deleteFiles([photo.raw_path, photo.preview_path, photo.thumb_path]);
+  await photos.deleteFiles([photo.raw_path, photo.preview_path, photo.thumb_path, photo.full_path]);
   res.json({ ok: true });
 });
 

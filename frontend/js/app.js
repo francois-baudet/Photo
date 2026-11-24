@@ -1452,7 +1452,7 @@ async function pageAdmin() {
 let LB_ITEMS = [];
 
 function registerLightbox(items) {
-  LB_ITEMS = items.map(p => ({ id: p.id, title: p.title, previewUrl: p.previewUrl || null }));
+  LB_ITEMS = items.map(p => ({ id: p.id, title: p.title, previewUrl: p.previewUrl || null, fullUrl: p.fullUrl || null }));
 }
 
 function openMetadata(photoId, parent) {
@@ -1505,8 +1505,10 @@ function openLightbox(startIndex) {
     const item = LB_ITEMS[current];
     overlay.querySelector('.lb-title').textContent = item.title;
     img.alt = item.title;
-    img.src = item.previewUrl || '';
-    img.style.visibility = item.previewUrl ? 'visible' : 'hidden';
+    // Pleine qualité quand l'utilisateur y a droit (tout sauf visiteur), sinon l'aperçu
+    const src = item.fullUrl || item.previewUrl;
+    img.src = src || '';
+    img.style.visibility = src ? 'visible' : 'hidden';
     overlay.querySelector('[data-lb-prev]').hidden = LB_ITEMS.length < 2;
     overlay.querySelector('[data-lb-next]').hidden = LB_ITEMS.length < 2;
   };
